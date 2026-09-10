@@ -45,5 +45,9 @@
   },
   "bin": {
     "luaut-language-server": "dist/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Uav3537/luaut-language-server.git"
   }
 }
