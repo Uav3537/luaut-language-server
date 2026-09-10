@@ -7,9 +7,9 @@
  * result is reused by hover, definition, completion and the rest.
  */
 import {
-    parseWithRecovery, analyzeScopes, analyzeTypes, defaultLibs,
+    parseWithRecovery, analyzeScopes, analyzeTypes, defaultLibs, getBinding,
     type Program, type ScopeAnalysis, type TypeAnalysis, type ParseError,
-    type DeclareStatement, type Statement,
+    type DeclareStatement, type Statement, type Binding, type Identifier,
 } from "luaut-parser"
 import type { TextDocument } from "vscode-languageserver-textdocument"
 
@@ -41,6 +41,32 @@ function collect(statements: readonly Statement[], into: Set<string>): void {
     for (const statement of statements) {
         if (statement.type === "DeclareStatement") into.add((statement as DeclareStatement).name)
     }
+}
+
+/** The binding a node names, whether it *uses* the binding or *declares* it.
+ *
+ *  Scope analysis indexes the two differently: every use is in `bindingOf`,
+ *  but a declaration only appears as its binding's `declarationNode`. Asking
+ *  `bindingOf` alone is why hovering `const x` — as opposed to a later `x` —
+ *  used to show nothing. */
+export function bindingOfNode(analysis: Analysis, node: object): Binding | undefined {
+    const used = getBinding(analysis.scopes, node as Identifier)
+    if (used) return used
+    return declarationIndex(analysis).get(node)
+}
+
+const declarationIndexes = new WeakMap<Analysis, Map<object, Binding>>()
+
+function declarationIndex(analysis: Analysis): Map<object, Binding> {
+    let index = declarationIndexes.get(analysis)
+    if (!index) {
+        index = new Map()
+        for (const binding of analysis.scopes.bindings.values()) {
+            if (binding.declarationNode) index.set(binding.declarationNode, binding)
+        }
+        declarationIndexes.set(analysis, index)
+    }
+    return index
 }
 
 export class Analyzer {

@@ -1,7 +1,7 @@
 /** Document symbols: the outline of a file. */
 import { SymbolKind, type DocumentSymbol } from "vscode-languageserver"
-import { formatType, getBinding, type Identifier } from "luaut-parser"
-import type { Analysis } from "../analysis.js"
+import { formatType, type Identifier } from "luaut-parser"
+import { bindingOfNode, type Analysis } from "../analysis.js"
 import { toRange, walk, type Spanned } from "../ast-utils.js"
 
 export function documentSymbols(analysis: Analysis): DocumentSymbol[] {
@@ -60,7 +60,7 @@ function functionName(node: Spanned): string | undefined {
 function detailOf(analysis: Analysis, node: Spanned): string | undefined {
     const name = (node as unknown as { name?: Identifier }).name
     if (name && typeof name === "object") {
-        const binding = getBinding(analysis.scopes, name)
+        const binding = bindingOfNode(analysis, name)
         const type = binding && analysis.types.bindingType.get(binding.id)
         if (type) return formatType(type)
     }

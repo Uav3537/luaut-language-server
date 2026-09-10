@@ -8,17 +8,21 @@ import {
     type DocumentHighlight, type Location, type Position, type Range,
     type TextEdit, type WorkspaceEdit,
 } from "vscode-languageserver"
-import { getBinding, type Binding, type Identifier } from "luaut-parser"
-import type { Analysis } from "../analysis.js"
+import type { Binding } from "luaut-parser"
+import { bindingOfNode, type Analysis } from "../analysis.js"
 import { pathAt, toRange, type Spanned } from "../ast-utils.js"
 
-/** The binding referred to at `position`, if the cursor is on a variable. */
+/** Nodes that can name a binding — as a use or as its declaration. */
+const NAMING = new Set(["Identifier", "IdentifierPattern", "FunctionParameter", "TypedIdentifier"])
+
+/** The binding referred to at `position`, if the cursor is on a variable —
+ *  a use of it or its declaration. */
 export function bindingAt(analysis: Analysis, position: Position): Binding | undefined {
     const path = pathAt(analysis.program, position, true)
     for (let i = path.length - 1; i >= 0; i--) {
         const node = path[i]
-        if (node.type !== "Identifier" && node.type !== "IdentifierPattern") continue
-        const binding = getBinding(analysis.scopes, node as unknown as Identifier)
+        if (!node.type || !NAMING.has(node.type)) continue
+        const binding = bindingOfNode(analysis, node)
         if (binding) return binding
     }
     return undefined
@@ -72,7 +76,7 @@ export function prepareRename(
     // uses and leave the declaration behind.
     if (binding.isBuiltin || !binding.declarationNode) return null
     const path = pathAt(analysis.program, position, true)
-    const identifier = [...path].reverse().find(n => n.type === "Identifier" || n.type === "IdentifierPattern")
+    const identifier = [...path].reverse().find(n => !!n.type && NAMING.has(n.type))
     if (!identifier) return null
     return { range: toRange(identifier), placeholder: binding.name }
 }

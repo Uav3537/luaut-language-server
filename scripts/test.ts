@@ -64,6 +64,32 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         "```luaut\nPosition: Vector3\n```")
 }
 
+// Declarations, not just uses. Scope analysis indexes these separately, and
+// hovering them used to show nothing at all.
+{
+    const hoverText = (src: string): string | undefined => {
+        const { document, cursor } = open(src)
+        return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)?.value
+    }
+    check("hover: a const declaration", hoverText(`const nu‸ms = [1, 2]\nprint(nums)\n`),
+        "```luaut\nconst nums: number[]\n```")
+    check("hover: a let declaration", hoverText(`let cou‸nt = 1\nprint(count)\n`),
+        "```luaut\nlet count: number\n```")
+    check("hover: a parameter",
+        hoverText(`const function f(x‸s: number[]): number\n    return #xs\nend\n`),
+        "```luaut\n(parameter) xs: number[]\n```")
+    check("hover: a function name",
+        hoverText(`const function first‸Two(xs: number[]): number\n    return 1\nend\n`),
+        "```luaut\nconst firstTwo: (xs: number[]) -> number\n```")
+}
+{
+    const { document, cursor } = open(`const tot‸al = 1\nprint(total)\n`)
+    const analysis = analyzer.get(document)
+    check("references: from the declaration itself", references(analysis, cursor, true).length, 2)
+    check("rename: from the declaration itself",
+        Object.values(rename(analysis, cursor, "sum")?.changes ?? {})[0]?.length, 2)
+}
+
 // --- diagnostics -------------------------------------------------------
 {
     const { document } = open(`const n: number = "text"\n`)

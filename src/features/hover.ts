@@ -1,7 +1,7 @@
 /** Hover: the type of the thing under the cursor, as luaut would write it. */
 import type { Hover, Position } from "vscode-languageserver"
-import { formatType, getBinding, type Identifier, type Expression, type Type } from "luaut-parser"
-import type { Analysis } from "../analysis.js"
+import { formatType, type Identifier, type Expression, type Type } from "luaut-parser"
+import { bindingOfNode, type Analysis } from "../analysis.js"
 import { pathAt, toRange, type Spanned } from "../ast-utils.js"
 
 export function hover(analysis: Analysis, position: Position): Hover | null {
@@ -15,7 +15,7 @@ export function hover(analysis: Analysis, position: Position): Hover | null {
 }
 
 function describe(analysis: Analysis, node: Spanned, parent?: Spanned): string | undefined {
-    const { types, scopes } = analysis
+    const { types } = analysis
 
     // A type alias reads as its definition rather than as a value.
     if (node.type === "TypeAliasStatement" || node.type === "ExportTypeAliasStatement") {
@@ -30,7 +30,7 @@ function describe(analysis: Analysis, node: Spanned, parent?: Spanned): string |
         // at this point, and the difference is the whole reason for narrowing.
         const narrowed = types.narrowedTypeOf.get(identifier)
         if (narrowed) return `${identifier.name}: ${formatType(narrowed)}`
-        const binding = getBinding(scopes, identifier)
+        const binding = bindingOfNode(analysis, identifier)
         if (binding) {
             const type = types.bindingType.get(binding.id)
             if (type) return `${keyword(binding)} ${binding.name}: ${formatType(type)}`
@@ -43,8 +43,10 @@ function describe(analysis: Analysis, node: Spanned, parent?: Spanned): string |
         }
     }
 
-    if (node.type === "IdentifierPattern") {
-        const binding = getBinding(scopes, node as never)
+    // Declarations: `const x`, a parameter, `const function f`.
+    if (node.type === "IdentifierPattern" || node.type === "FunctionParameter"
+        || node.type === "TypedIdentifier") {
+        const binding = bindingOfNode(analysis, node)
         if (binding) {
             const type = types.bindingType.get(binding.id)
             if (type) return `${keyword(binding)} ${binding.name}: ${formatType(type)}`
