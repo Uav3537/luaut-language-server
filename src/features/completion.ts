@@ -13,8 +13,9 @@ import {
 } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
 import { formatType, type Expression, type Type } from "luaut-parser"
-import type { Analyzer } from "../analysis.js"
+import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
+import { importCompletion } from "./imports.js"
 import { membersOf, signaturesOf, signatureLabel } from "./members.js"
 
 const PLACEHOLDER = "__luautCompletion__"
@@ -25,6 +26,10 @@ export function completion(
     document: TextDocument,
     position: Position,
 ): CompletionItem[] {
+    // A module path or imported name: answered from the other module.
+    const inImport = importCompletion(analyzer, document, position)
+    if (inImport) return inImport
+
     const source = document.getText()
     const offset = document.offsetAt(position)
 
@@ -35,37 +40,46 @@ export function completion(
     let end = offset
     while (end < source.length && IDENTIFIER_CHAR.test(source[end])) end++
 
-    // A method name has to be called to parse (`part:foo` alone is not a
-    // statement), so the placeholder brings its own argument list unless the
-    // source already has one.
-    const afterColon = source[start - 1] === ":"
+    const operator = memberOperator(source, start)
     const alreadyCalled = /^\s*\(/.test(source.slice(end))
-    const stand_in = afterColon && !alreadyCalled ? `${PLACEHOLDER}()` : PLACEHOLDER
-    const patched = source.slice(0, start) + stand_in + source.slice(end)
-    const analysis = analyzer.analyze(document.uri, -1, patched)
+
+    // A member access on its own is not a statement — `obj.foo` alone on a
+    // line is a syntax error, which is exactly where people type `obj.` — so
+    // after `.` the placeholder is also tried as a call, which parses wherever
+    // the access would and on a line of its own too. A method name after `:`
+    // must be called to parse at all.
+    const standIns = operator === ":"
+        ? [alreadyCalled ? PLACEHOLDER : `${PLACEHOLDER}()`]
+        : operator === "." && !alreadyCalled
+            ? [PLACEHOLDER, `${PLACEHOLDER}()`]
+            : [PLACEHOLDER]
 
     // Where the placeholder sits, in the patched document's coordinates —
     // the same line, since the patch never spans one.
     const at: Position = { line: position.line, character: position.character - (offset - start) }
-    const path = pathAt(analysis.program, at, true)
-    const placeholder = [...path].reverse().find(
-        n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
-    )
-    const parent = placeholder ? path[path.indexOf(placeholder) - 1] : path[path.length - 1]
 
-    // Member access: `x.foo` / `x:foo`.
-    if (parent && (parent.type === "MemberExpression" || parent.type === "MethodCallExpression")) {
-        const object = (parent as unknown as { object: Expression }).object
-        const type = analysis.types.typeOf.get(object)
-        const wantMethods = parent.type === "MethodCallExpression"
-        return membersOf(type, analysis.types.aliases)
-            .filter(member => (wantMethods ? member.isMethod : true))
-            .map(member => memberItem(member.name, member.property.type, member.property.readonly))
+    let first: { analysis: Analysis; path: Spanned[] } | undefined
+    for (const standIn of standIns) {
+        const patched = source.slice(0, start) + standIn + source.slice(end)
+        const analysis = analyzer.analyze(document.uri, -1, patched)
+        const path = pathAt(analysis.program, at, true)
+        const index = path.findLastIndex(
+            n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
+        )
+        const parent = index > 0 ? path[index - 1] : undefined
+        if (parent && (parent.type === "MemberExpression" || parent.type === "MethodCallExpression")) {
+            return memberItems(analysis, parent)
+        }
+        first ??= { analysis, path }
     }
 
+    // After `.` or `:` only members make sense. If none could be found, an
+    // empty list is honest; the globals are never what was meant there.
+    if (operator || !first) return []
+
     // A type position wants type names, not values.
-    if (inTypePosition(path)) {
-        const named: CompletionItem[] = [...analysis.types.aliases.keys()].map(name => ({
+    if (inTypePosition(first.path)) {
+        const named: CompletionItem[] = [...first.analysis.types.aliases.keys()].map(name => ({
             label: name,
             kind: CompletionItemKind.Interface,
             detail: "type",
@@ -78,7 +92,54 @@ export function completion(
         return [...named, ...primitives]
     }
 
-    return valueItems(analysis, at)
+    return valueItems(first.analysis, at)
+}
+
+/** The member operator right before the word being typed, if there is one.
+ *  `..` is concatenation and `1.` is a number, neither of which has members. */
+function memberOperator(source: string, wordStart: number): "." | ":" | undefined {
+    const ch = source[wordStart - 1]
+    if (ch === ":") return source[wordStart - 2] === ":" ? undefined : ":"
+    if (ch !== ".") return undefined
+    if (source[wordStart - 2] === ".") return undefined
+    // A run of digits right before the dot, not part of a longer name.
+    let i = wordStart - 2
+    while (i >= 0 && /[0-9]/.test(source[i])) i--
+    const digits = wordStart - 2 - i
+    if (digits > 0 && (i < 0 || !/[A-Za-z_]/.test(source[i]))) return undefined
+    return "."
+}
+
+function memberItems(analysis: Analysis, access: Spanned): CompletionItem[] {
+    const object = (access as unknown as { object: Expression }).object
+    const type = analysis.types.typeOf.get(object)
+    const colon = access.type === "MethodCallExpression"
+
+    // A string has no fields, but `s:upper()` reaches the `string` library
+    // through the string metatable — so after `:` offer that library.
+    if (isStringLike(type)) {
+        if (!colon) return []
+        const id = analysis.scopes.globalsByName.get("string")
+        const library = id === undefined ? undefined : analysis.types.bindingType.get(id)
+        return membersOf(library, analysis.types.aliases)
+            .filter(member => signaturesOf(member.property.type).length > 0)
+            .map(member => memberItem(member.name, member.property.type, member.property.readonly))
+    }
+
+    return membersOf(type, analysis.types.aliases)
+        .filter(member => (colon ? member.isMethod : true))
+        .map(member => memberItem(member.name, member.property.type, member.property.readonly))
+}
+
+function isStringLike(type: Type | undefined): boolean {
+    if (!type) return false
+    switch (type.kind) {
+        case "primitive": return type.name === "string"
+        case "literal": return typeof type.value === "string"
+        case "templateLiteral": return true
+        case "union": return type.types.length > 0 && type.types.every(isStringLike)
+        default: return false
+    }
 }
 
 /** Names in scope at `at`. Scope analysis records where each binding is
@@ -86,7 +147,7 @@ export function completion(
  *  declared earlier in the file, plus the globals, which are visible
  *  everywhere. Over-offering is the right failure — a name the editor lists
  *  and the file rejects is a diagnostic away from being obvious. */
-function valueItems(analysis: ReturnType<Analyzer["analyze"]>, at: Position): CompletionItem[] {
+function valueItems(analysis: Analysis, at: Position): CompletionItem[] {
     const items: CompletionItem[] = []
     const seen = new Set<string>()
     for (const binding of analysis.scopes.bindings.values()) {

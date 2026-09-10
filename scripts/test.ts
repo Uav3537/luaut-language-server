@@ -182,6 +182,112 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains("semantic: a function-typed property is a method", literal, "run:method.declaration")
 }
 
+// --- completion where people actually type ------------------------------
+// A member access alone on a line is a syntax error, and that is exactly where
+// `obj.` gets typed. These used to fall back to listing the globals.
+{
+    const labelsAt = (src: string): string[] => {
+        const { document, cursor } = open(src)
+        return completion(analyzer, document, cursor).map(i => i.label)
+    }
+    check("completion: `obj.` on its own line after a multi-line object",
+        labelsAt(`const obj = {\n    a: 1\n}\nobj.‸`), ["a"])
+    contains("completion: `game.` alone on a line", labelsAt(`game.‸\n`), "Workspace")
+    contains("completion: a chain `game.Workspace.`", labelsAt(`game.Workspace.‸\n`), "Name")
+    contains("completion: `:` on a string reaches the string library", labelsAt(`const s = "abc"\ns:‸\n`), "upper")
+    check("completion: nothing, rather than globals, when a type has no members",
+        labelsAt(`const xs = [1, 2]\nxs.‸\n`), [])
+    check("completion: `..` is concatenation, not member access",
+        labelsAt(`const alpha = 1\nprint("a" ..‸)\n`).includes("alpha"), true)
+}
+
+// --- modules -----------------------------------------------------------
+// Real files in a temp folder, since imports resolve against the file system.
+{
+    const { mkdtempSync, writeFileSync, mkdirSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { join } = await import("node:path")
+    const { pathToFileURL } = await import("node:url")
+    const { importDefinition } = await import("../src/features/imports.js")
+
+    const root = mkdtempSync(join(tmpdir(), "luaut-modules-"))
+    mkdirSync(join(root, "shared"))
+    writeFileSync(join(root, "shared", "shapes.luaut"), [
+        "export type Point = { x: number, y: number }",
+        "export const ORIGIN: Point = { x: 0, y: 0 }",
+        "export const function distance(a: Point, b: Point): number",
+        "    return a.x - b.x",
+        "end",
+        "export default ORIGIN",
+        "",
+    ].join("\n"))
+
+    const modules = new Analyzer()
+    const file = (name: string, text: string) => {
+        const index = text.indexOf("‸")
+        const clean = index < 0 ? text : text.slice(0, index) + text.slice(index + 1)
+        writeFileSync(join(root, name), clean)
+        const document = TextDocument.create(pathToFileURL(join(root, name)).href, "luaut", 1, clean)
+        return { document, cursor: document.positionAt(Math.max(index, 0)) }
+    }
+    const hoverText = (document: TextDocument, cursor: Position): string | undefined =>
+        (hover(modules.get(document), cursor)?.contents as { value: string } | undefined)?.value
+
+    {
+        const { document, cursor } = file("main.luaut",
+            `import origin, { ORIGIN, distance, Point } from "./shared/shapes"\nconst p: Point = { x: 1, y: 2 }\nprint(dist‸ance(p, ORIGIN), origin)\n`)
+        check("modules: an imported function has its real type, not any",
+            hoverText(document, cursor)?.includes("-> number"), true)
+        check("modules: a valid import has no diagnostics", diagnostics(modules.get(document)).map(d => d.message), [])
+    }
+    {
+        const { document } = file("broken.luaut",
+            `import { nope } from "./shared/shapes"\nimport x from "./missing"\nprint(nope, x)\n`)
+        const messages = diagnostics(modules.get(document)).map(d => d.message)
+        contains("modules: a missing module is reported", messages, "Cannot find module './missing'")
+        contains("modules: a missing export is reported", messages, "Module './shared/shapes' has no exported member 'nope'")
+    }
+    {
+        const { document } = file("typed.luaut", `import { ORIGIN } from "./shared/shapes"\nconst wrong: string = ORIGIN\n`)
+        check("modules: an import is type-checked", diagnostics(modules.get(document)).length, 1)
+    }
+    {
+        const { document, cursor } = file("paths.luaut", `import { ORIGIN } from "./‸"\n`)
+        const labels = completion(modules, document, cursor).map(i => i.label)
+        contains("modules: path completion lists folders", labels, "shared/")
+        contains("modules: path completion lists modules without the extension", labels, "main")
+        check("modules: a file is not offered to itself", labels.includes("paths"), false)
+    }
+    {
+        const { document, cursor } = file("nested.luaut", `import { ORIGIN } from "./shared/‸"\n`)
+        contains("modules: path completion inside a folder", completion(modules, document, cursor).map(i => i.label), "shapes")
+    }
+    {
+        const { document, cursor } = file("names.luaut", `import { ORIGIN, ‸ } from "./shared/shapes"\n`)
+        const labels = completion(modules, document, cursor).map(i => i.label)
+        contains("modules: exported values inside the braces", labels, "distance")
+        contains("modules: exported types inside the braces", labels, "Point")
+        check("modules: names already imported are not offered again", labels.includes("ORIGIN"), false)
+    }
+    {
+        const { document, cursor } = file("jump.luaut", `import { dist‸ance } from "./shared/shapes"\nprint(distance)\n`)
+        const location = importDefinition(modules, modules.get(document), cursor)
+        check("modules: definition jumps into the other module", location?.uri.endsWith("shapes.luaut"), true)
+        check("modules: ...to the exported declaration", location?.range.start, { line: 2, character: 22 })
+    }
+    {
+        const { document, cursor } = file("member.luaut", `import origin from "./shared/shapes"\norigin.‸\n`)
+        contains("modules: members of a default import", completion(modules, document, cursor).map(i => i.label), "x")
+    }
+    {
+        // Editing the imported module invalidates the importer's cached result.
+        const { document } = file("watch.luaut", `import { ORIGIN } from "./shared/shapes"\nconst n: { x: number, y: number } = ORIGIN\n`)
+        check("modules: before the export changes", diagnostics(modules.get(document)).length, 0)
+        writeFileSync(join(root, "shared", "shapes.luaut"), `export const ORIGIN = "moved"\n`)
+        check("modules: after it changes, the importer is re-checked", diagnostics(modules.get(document)).length, 1)
+    }
+}
+
 // --- diagnostics -------------------------------------------------------
 {
     const { document } = open(`const n: number = "text"\n`)

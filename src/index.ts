@@ -7,7 +7,8 @@
  * editor extension can call them directly in-process.
  */
 export { createServer, startServer, type ServerOptions } from "./server.js"
-export { Analyzer, type Analysis, type AnalyzerOptions } from "./analysis.js"
+export { Analyzer, pathOfUri, uriOfPath, samePath, type Analysis, type AnalyzerOptions } from "./analysis.js"
+export { importCompletion, importDefinition, exportDeclaration } from "./features/imports.js"
 
 export { diagnostics } from "./features/diagnostics.js"
 export { hover } from "./features/hover.js"

@@ -19,15 +19,22 @@ luaut-language-server --stdio
 | `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke |
 | `hover` | the type as luaut writes it — the **narrowed** type at a reference, so a guarded `v` reads `string`, not `string \| nil`. Also every name in a type or definitions file: `declare` names (with their overload count), alias names, object-type properties, type parameters, `infer` names, and any type annotation, which reads as what it resolves to |
 | `semanticTokens` | colours from the parser, not from patterns — see [Highlighting](#highlighting) |
-| `definition` | the binding's declaration |
+| `definition` | the binding's declaration — and from an `import`, the export in the other module |
 | `references`, `documentHighlight` | every use of the binding |
 | `rename`, `prepareRename` | refuses names that are not identifiers, and builtins from the definitions files |
-| `completion` | members after `.` / `:`, names in scope, type names in a type position |
+| `completion` | members after `.` / `:` (never the globals there), names in scope, type names in a type position; inside an `import`, module paths and the exported names |
 | `signatureHelp` | every overload, with the active parameter — `:` calls count `self` for you |
 | `documentSymbol` | functions, type aliases, top-level bindings |
 
-Single file, for now: `import` resolves to `any`, so cross-file navigation is
-not there yet. See [Not yet](#not-yet).
+### Modules
+
+An `import` resolves to a file relative to the importer (`./x`, `../x`; the
+extension may be left off, and a folder means its `index.luaut`). That module
+is analyzed too, and its exports become the importer's types — so imported
+values are type-checked, imported types work in annotations, and a missing
+module or export is a diagnostic. Open documents are read before disk, so an
+import sees unsaved edits, and a cached result is dropped as soon as anything
+it imports changes.
 
 ## How it is put together
 

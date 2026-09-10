@@ -10,7 +10,8 @@ import {
     type Connection, type InitializeParams, type InitializeResult,
 } from "vscode-languageserver/node"
 import { TextDocument } from "vscode-languageserver-textdocument"
-import { Analyzer, type AnalyzerOptions } from "./analysis.js"
+import { Analyzer, pathOfUri, samePath, type AnalyzerOptions } from "./analysis.js"
+import { importDefinition } from "./features/imports.js"
 import { diagnostics } from "./features/diagnostics.js"
 import { hover } from "./features/hover.js"
 import { definition, references, highlights, prepareRename, rename } from "./features/navigation.js"
@@ -25,8 +26,15 @@ export interface ServerOptions extends AnalyzerOptions {}
  *  `startServer` so an editor extension can run it in-process over its own
  *  transport, and so the tests can drive it without spawning anything. */
 export function createServer(connection: Connection, options: ServerOptions = {}): void {
-    const analyzer = new Analyzer(options)
     const documents = new TextDocuments(TextDocument)
+    // Imports read open documents before disk, so they see unsaved edits.
+    const analyzer = new Analyzer({
+        ...options,
+        openDocument: path => documents.all().find(document => {
+            const documentPath = pathOfUri(document.uri)
+            return documentPath !== undefined && samePath(documentPath, path)
+        }),
+    })
 
     connection.onInitialize((_params: InitializeParams): InitializeResult => ({
         capabilities: {
@@ -40,7 +48,8 @@ export function createServer(connection: Connection, options: ServerOptions = {}
             completionProvider: {
                 // `.` and `:` open a member list; the rest of the time
                 // completion is asked for as you type a word.
-                triggerCharacters: [".", ":"],
+                // plus the characters that start or extend an import path.
+                triggerCharacters: [".", ":", "\"", "'", "/"],
                 resolveProvider: false,
             },
             signatureHelpProvider: { triggerCharacters: ["(", ","], retriggerCharacters: [","] },
@@ -67,7 +76,14 @@ export function createServer(connection: Connection, options: ServerOptions = {}
     }
 
     documents.onDidOpen(e => publish(e.document))
-    documents.onDidChangeContent(e => publish(e.document))
+    // Any change can affect every open file that imports the changed one, so
+    // all of them are re-checked; unchanged ones come straight from the cache.
+    const publishAll = (): void => {
+        for (const document of documents.all()) publish(document)
+    }
+    documents.onDidChangeContent(publishAll)
+    // A module edited, created or deleted outside the editor.
+    connection.onDidChangeWatchedFiles(publishAll)
     documents.onDidClose(e => {
         analyzer.forget(e.document.uri)
         void connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] })
@@ -84,7 +100,14 @@ export function createServer(connection: Connection, options: ServerOptions = {}
     ))
 
     connection.onDefinition(p => withDocument(
-        p.textDocument.uri, d => definition(analyzer.get(d), p.position), null,
+        p.textDocument.uri,
+        d => {
+            const analysis = analyzer.get(d)
+            // Inside an import, the definition is in the other module.
+            const across = importDefinition(analyzer, analysis, p.position)
+            return across !== undefined ? across : definition(analysis, p.position)
+        },
+        null,
     ))
 
     connection.onReferences(p => withDocument(
