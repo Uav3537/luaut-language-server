@@ -1,0 +1,25 @@
+/**
+ * luaut-language-server — LSP front end for luaut, built on `luaut-parser`.
+ *
+ * The usual way in is `startServer()` (or the `luaut-language-server` binary).
+ * The feature functions are exported too: they are plain
+ * `(analysis, position) -> answer` functions with no LSP plumbing, so an
+ * editor extension can call them directly in-process.
+ */
+export { createServer, startServer, type ServerOptions } from "./server.js"
+export { Analyzer, type Analysis, type AnalyzerOptions } from "./analysis.js"
+
+export { diagnostics } from "./features/diagnostics.js"
+export { hover } from "./features/hover.js"
+export {
+    definition, references, highlights, prepareRename, rename, bindingAt,
+} from "./features/navigation.js"
+export { completion } from "./features/completion.js"
+export { signatureHelp } from "./features/signatureHelp.js"
+export { documentSymbols } from "./features/symbols.js"
+export { membersOf, signaturesOf, signatureLabel, type Member } from "./features/members.js"
+
+export {
+    toRange, toPosition, containsPosition, pathAt, nodeAt, enclosing, walk, children,
+    type Spanned,
+} from "./ast-utils.js"

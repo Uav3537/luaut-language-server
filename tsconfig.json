@@ -1,0 +1,25 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "lib": ["ESNext", "DOM", "DOM.Iterable"],
+        "declaration": false,
+        "declarationMap": false,
+        "sourceMap": false,
+        "outDir": "./dist",
+        "rootDir": "./src",
+        "moduleResolution": "bundler",
+        "allowSyntheticDefaultImports": true,
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+        "strict": true,
+        "skipLibCheck": true,
+        "stripInternal": true,
+        "paths": {
+            "@lexer/*": ["./src/lexer/*"],
+            "@ast/*": ["./src/ast/*"]
+        }
+    },
+    "include": ["src/**/*"],
+    "exclude": ["node_modules", "dist"]
+}

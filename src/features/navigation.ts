@@ -1,0 +1,91 @@
+/**
+ * Go-to-definition, find-references, rename and document highlight — all four
+ * are the same question ("which binding is this, and where else does it
+ * appear?") asked with different answers.
+ */
+import {
+    DocumentHighlightKind,
+    type DocumentHighlight, type Location, type Position, type Range,
+    type TextEdit, type WorkspaceEdit,
+} from "vscode-languageserver"
+import { getBinding, type Binding, type Identifier } from "luaut-parser"
+import type { Analysis } from "../analysis.js"
+import { pathAt, toRange, type Spanned } from "../ast-utils.js"
+
+/** The binding referred to at `position`, if the cursor is on a variable. */
+export function bindingAt(analysis: Analysis, position: Position): Binding | undefined {
+    const path = pathAt(analysis.program, position, true)
+    for (let i = path.length - 1; i >= 0; i--) {
+        const node = path[i]
+        if (node.type !== "Identifier" && node.type !== "IdentifierPattern") continue
+        const binding = getBinding(analysis.scopes, node as unknown as Identifier)
+        if (binding) return binding
+    }
+    return undefined
+}
+
+/** Every place the binding appears: its declaration plus every reference. */
+function sites(binding: Binding): Spanned[] {
+    const out: Spanned[] = []
+    if (binding.declarationNode) out.push(binding.declarationNode as unknown as Spanned)
+    out.push(...(binding.references as unknown as Spanned[]))
+    return out
+}
+
+export function definition(analysis: Analysis, position: Position): Location | null {
+    const binding = bindingAt(analysis, position)
+    if (!binding?.declarationNode) return null
+    return { uri: analysis.uri, range: toRange(binding.declarationNode as unknown as Spanned) }
+}
+
+export function references(
+    analysis: Analysis,
+    position: Position,
+    includeDeclaration: boolean,
+): Location[] {
+    const binding = bindingAt(analysis, position)
+    if (!binding) return []
+    const nodes = includeDeclaration ? sites(binding) : (binding.references as unknown as Spanned[])
+    return nodes.map(node => ({ uri: analysis.uri, range: toRange(node) }))
+}
+
+export function highlights(analysis: Analysis, position: Position): DocumentHighlight[] {
+    const binding = bindingAt(analysis, position)
+    if (!binding) return []
+    return sites(binding).map(node => ({
+        range: toRange(node),
+        kind: node === binding.declarationNode
+            ? DocumentHighlightKind.Write
+            : DocumentHighlightKind.Read,
+    }))
+}
+
+/** The range rename would replace, and the current name — so the editor can
+ *  refuse before it asks for a new one. */
+export function prepareRename(
+    analysis: Analysis,
+    position: Position,
+): { range: Range; placeholder: string } | null {
+    const binding = bindingAt(analysis, position)
+    if (!binding) return null
+    // A builtin lives in a definitions file; renaming it here would rename the
+    // uses and leave the declaration behind.
+    if (binding.isBuiltin || !binding.declarationNode) return null
+    const path = pathAt(analysis.program, position, true)
+    const identifier = [...path].reverse().find(n => n.type === "Identifier" || n.type === "IdentifierPattern")
+    if (!identifier) return null
+    return { range: toRange(identifier), placeholder: binding.name }
+}
+
+export function rename(analysis: Analysis, position: Position, newName: string): WorkspaceEdit | null {
+    if (!isIdentifier(newName)) return null
+    const binding = bindingAt(analysis, position)
+    if (!binding || binding.isBuiltin || !binding.declarationNode) return null
+    const edits: TextEdit[] = sites(binding).map(node => ({ range: toRange(node), newText: newName }))
+    return { changes: { [analysis.uri]: edits } }
+}
+
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
+function isIdentifier(name: string): boolean {
+    return IDENTIFIER.test(name)
+}

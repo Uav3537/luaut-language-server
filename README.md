@@ -1,0 +1,100 @@
+# luaut-language-server
+
+Language server (LSP) for **luaut** — the TypeScript-flavoured language that
+compiles to Luau. It is a thin layer over [`luaut-parser`][parser]: the parser
+does the parsing, scope analysis and flow-sensitive type analysis, and this
+package answers editor questions from the tables it produces.
+
+[parser]: https://www.npmjs.com/package/luaut-parser
+
+```bash
+npm install luaut-language-server
+luaut-language-server --stdio
+```
+
+## What it does
+
+| request | notes |
+|---|---|
+| `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke |
+| `hover` | the type as luaut writes it — the **narrowed** type at a reference, so a guarded `v` reads `string`, not `string \| nil` |
+| `definition` | the binding's declaration |
+| `references`, `documentHighlight` | every use of the binding |
+| `rename`, `prepareRename` | refuses names that are not identifiers, and builtins from the definitions files |
+| `completion` | members after `.` / `:`, names in scope, type names in a type position |
+| `signatureHelp` | every overload, with the active parameter — `:` calls count `self` for you |
+| `documentSymbol` | functions, type aliases, top-level bindings |
+
+Single file, for now: `import` resolves to `any`, so cross-file navigation is
+not there yet. See [Not yet](#not-yet).
+
+## How it is put together
+
+```
+src/
+  server.ts       LSP wiring, and nothing else
+  analysis.ts     parse -> scopes -> types, cached per document version
+  ast-utils.ts    1-based spans <-> 0-based LSP positions, position -> node
+  features/       one file per feature; plain functions, no LSP plumbing
+```
+
+A feature is `(analysis, position) -> answer`. Nothing in `features/` opens a
+connection or knows about documents, which is why `scripts/test.ts` can drive
+all of them in-process without spawning a server, and why an editor extension
+can call them directly:
+
+```ts
+import { Analyzer, hover, diagnostics } from "luaut-language-server"
+
+const analyzer = new Analyzer()               // or { libs: [...] } for your own definitions
+const analysis = analyzer.get(document)       // a vscode-languageserver TextDocument
+hover(analysis, { line: 3, character: 12 })
+diagnostics(analysis)
+```
+
+### Speculative parsing
+
+`x.` and `add(1, ` are syntax errors — the text you are in the middle of
+typing usually is. Completion and signature help therefore analyze a
+*repaired copy* of the document: a placeholder identifier at the cursor for
+completion, and the shortest of `nil`, `nil)`, `)` that parses for signature
+help. The user's document is never touched and the repaired copy is never
+cached.
+
+### Globals
+
+The names a file may use undeclared are not hard-coded: they are read out of
+the `declare` statements in the definitions passed to `Analyzer`. Adding a
+global to a `.d.luaut` is all it takes for the editor to stop calling it
+undefined.
+
+## Not yet
+
+- **One file at a time.** No workspace indexing, so no cross-file
+  go-to-definition, `workspace/symbol`, or diagnostics for files you have not
+  opened.
+- **No formatting** — there is no luaut printer yet (the compiler owns
+  emitting Luau, and it emits *Luau*, not luaut).
+- No code actions, inlay hints, semantic tokens, or folding ranges.
+- Everything `luaut-parser` does not check is invisible here too: unknown
+  properties, writes to `readonly`, generic constraints at call sites,
+  metatables.
+
+## Editors
+
+VS Code: [`luaut-vscode`](../luaut-vscode) — a separate project next door. It
+bundles this server into the extension, so its `.vsix` is self-contained.
+
+Anything else that speaks LSP: launch `luaut-language-server --stdio` (or
+`--node-ipc`) and attach it to the `luaut` language / `.luaut` files.
+
+## Development
+
+```bash
+npm run typecheck
+npm test          # features in-process, then the built binary over stdio
+npm run build
+```
+
+`scripts/test.ts` marks the cursor with `‸` in each fixture (not `|` — that is
+the union operator). `scripts/e2e.ts` speaks real LSP to `dist/cli.js`.

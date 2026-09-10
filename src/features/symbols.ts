@@ -1,0 +1,73 @@
+/** Document symbols: the outline of a file. */
+import { SymbolKind, type DocumentSymbol } from "vscode-languageserver"
+import { formatType, getBinding, type Identifier } from "luaut-parser"
+import type { Analysis } from "../analysis.js"
+import { toRange, walk, type Spanned } from "../ast-utils.js"
+
+export function documentSymbols(analysis: Analysis): DocumentSymbol[] {
+    const out: DocumentSymbol[] = []
+
+    walk(analysis.program, node => {
+        switch (node.type) {
+            case "FunctionDeclaration":
+            case "FunctionDeclarationStatement": {
+                const name = functionName(node)
+                if (name) out.push(symbol(name, SymbolKind.Function, node, detailOf(analysis, node)))
+                break
+            }
+            case "TypeAliasStatement":
+            case "ExportTypeAliasStatement": {
+                // The alias name is an Identifier node here, a bare string on
+                // a `declare` — take either.
+                const named = (node as unknown as { name?: string | { name?: string } }).name
+                const name = typeof named === "string" ? named : named?.name
+                if (name) {
+                    const alias = analysis.types.aliases.get(name)
+                    out.push(symbol(name, SymbolKind.Interface, node, alias ? formatType(alias) : undefined))
+                }
+                break
+            }
+            case "VariableDeclaration": {
+                for (const target of (node as unknown as { names?: Spanned[] }).names ?? []) {
+                    const name = (target as unknown as { name?: string }).name
+                    if (name) out.push(symbol(name, SymbolKind.Variable, target))
+                }
+                break
+            }
+        }
+    })
+
+    return out
+}
+
+function functionName(node: Spanned): string | undefined {
+    const named = node as unknown as {
+        name?: string | { name?: string }
+        target?: { base?: { name?: string }; path?: { name?: string }[]; method?: { name: string } }
+    }
+    if (typeof named.name === "string") return named.name
+    if (named.name && typeof named.name === "object") return named.name.name
+    if (named.target?.base?.name) {
+        const path = (named.target.path ?? []).map(p => p.name).filter(Boolean)
+        const dotted = [named.target.base.name, ...path].join(".")
+        return named.target.method ? `${dotted}:${named.target.method.name}` : dotted
+    }
+    return undefined
+}
+
+/** A function declaration is a statement, not an expression, so its type
+ *  comes from the binding it creates rather than from `typeOf`. */
+function detailOf(analysis: Analysis, node: Spanned): string | undefined {
+    const name = (node as unknown as { name?: Identifier }).name
+    if (name && typeof name === "object") {
+        const binding = getBinding(analysis.scopes, name)
+        const type = binding && analysis.types.bindingType.get(binding.id)
+        if (type) return formatType(type)
+    }
+    return undefined
+}
+
+function symbol(name: string, kind: SymbolKind, node: Spanned, detail?: string): DocumentSymbol {
+    const range = toRange(node)
+    return { name, kind, detail, range, selectionRange: range }
+}
