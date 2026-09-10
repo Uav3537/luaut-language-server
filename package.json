@@ -44,6 +44,6 @@
     "vscode-languageserver-textdocument": "^1.0.14"
   },
   "bin": {
-    "luaut-language-server": "./dist/cli.js"
+    "luaut-language-server": "dist/cli.js"
   }
 }
