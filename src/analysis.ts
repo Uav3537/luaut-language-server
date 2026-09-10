@@ -30,9 +30,10 @@ export interface Analysis {
     readonly parseErrors: readonly ParseError[]
     readonly scopes: ScopeAnalysis
     readonly types: TypeAnalysis
-    /** Every module this analysis imported, by file path, with the text it
-     *  read — how a cached result tells that an import changed under it. */
-    readonly dependencies: ReadonlyMap<string, string>
+    /** Every file this analysis read for an import, with the text it read —
+     *  or `undefined` for a file it looked for and did not find. How a cached
+     *  result tells that an import changed, appeared or vanished under it. */
+    readonly dependencies: ReadonlyMap<string, string | undefined>
 }
 
 export interface AnalyzerOptions {
@@ -166,13 +167,17 @@ export class Analyzer {
      *  `../x`); the extension may be left off, and a folder means its
      *  `index.luaut`. */
     resolveModulePath(fromUri: string, specifier: string): string | undefined {
+        return this.moduleCandidates(fromUri, specifier).find(candidate => this.sourceOf(candidate) !== undefined)
+    }
+
+    /** Every file an import could mean, in the order they are tried. */
+    private moduleCandidates(fromUri: string, specifier: string): string[] {
         const from = pathOfUri(fromUri)
-        if (!from || !(specifier.startsWith("./") || specifier.startsWith("../"))) return undefined
+        if (!from || !(specifier.startsWith("./") || specifier.startsWith("../"))) return []
         const base = resolve(dirname(from), specifier)
-        const candidates = specifier.endsWith(".luaut")
+        return specifier.endsWith(".luaut")
             ? [base]
             : [`${base}.luaut`, `${base}.d.luaut`, join(base, "index.luaut")]
-        return candidates.find(candidate => this.sourceOf(candidate) !== undefined)
     }
 
     /** What the module at `path` exports, analyzing it if need be. */
@@ -201,14 +206,21 @@ export class Analyzer {
     private analyzeModule(uri: string, version: number, source: string, importing: Set<string>): Analysis {
         const { program, errors } = parseWithRecovery(source)
         const scopes = analyzeScopes(program, { builtinGlobals: this.builtinGlobals })
-        const dependencies = new Map<string, string>()
+        const dependencies = new Map<string, string | undefined>()
         const types = analyzeTypes(program, scopes, {
             libs: this.libs,
             resolveModule: specifier => {
                 const target = this.resolveModulePath(uri, specifier)
-                if (!target) return undefined
+                if (!target) {
+                    // Remember where it was looked for. Otherwise creating the
+                    // file later would leave this module's "Cannot find module"
+                    // — and its unresolved types — cached until its own text
+                    // changed.
+                    for (const candidate of this.moduleCandidates(uri, specifier)) dependencies.set(candidate, undefined)
+                    return undefined
+                }
                 const exports = this.exportsOf(target, importing)
-                dependencies.set(target, this.sourceOf(target) ?? "")
+                dependencies.set(target, this.sourceOf(target))
                 return exports
             },
         })
@@ -225,7 +237,11 @@ export class Analyzer {
         importing.add(key)
         try {
             const analysis = this.analyzeModule(uriOfPath(path), -1, source, importing)
-            const exports = moduleExports(analysis.program, analysis.scopes, analysis.types)
+            // Re-exports (`export ... from`) resolve relative to this module.
+            const exports = moduleExports(analysis.program, analysis.scopes, analysis.types, specifier => {
+                const next = this.resolveModulePath(analysis.uri, specifier)
+                return next ? this.exportsOf(next, importing) : undefined
+            })
             this.modules.set(key, { analysis, exports })
             return exports
         } finally {

@@ -47,7 +47,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const { document, cursor } = open(`const answer = 42\nprint(ans‸wer)\n`)
     const result = hover(analyzer.get(document), cursor)
     check("hover: const keeps its literal type", (result?.contents as { value: string }).value,
-        "```luaut\nanswer: 42\n```")
+        "```luaut-hover\nanswer: 42\n```")
 }
 {
     const { document, cursor } = open(
@@ -55,13 +55,13 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     )
     const result = hover(analyzer.get(document), cursor)
     check("hover: shows the narrowed type", (result?.contents as { value: string }).value,
-        "```luaut\nv: string\n```")
+        "```luaut-hover\nv: string\n```")
 }
 {
     const { document, cursor } = open(`const part = Instance.new("Part")\nprint(part.Posi‸tion)\n`)
     const result = hover(analyzer.get(document), cursor)
     check("hover: property of a Roblox class", (result?.contents as { value: string }).value,
-        "```luaut\nPosition: Vector3\n```")
+        "```luaut-hover\nPosition: Vector3\n```")
 }
 
 // Declarations, not just uses. Scope analysis indexes these separately, and
@@ -72,15 +72,15 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)?.value
     }
     check("hover: a const declaration", hoverText(`const nu‸ms = [1, 2]\nprint(nums)\n`),
-        "```luaut\nconst nums: number[]\n```")
+        "```luaut-hover\nconst nums: number[]\n```")
     check("hover: a let declaration", hoverText(`let cou‸nt = 1\nprint(count)\n`),
-        "```luaut\nlet count: number\n```")
+        "```luaut-hover\nlet count: number\n```")
     check("hover: a parameter",
         hoverText(`const function f(x‸s: number[]): number\n    return #xs\nend\n`),
-        "```luaut\n(parameter) xs: number[]\n```")
+        "```luaut-hover\n(parameter) xs: number[]\n```")
     check("hover: a function name",
         hoverText(`const function first‸Two(xs: number[]): number\n    return 1\nend\n`),
-        "```luaut\nconst firstTwo: (xs: number[]) -> number\n```")
+        "```luaut-hover\nconst firstTwo: (xs: number[]) -> number\n```")
 }
 {
     const { document, cursor } = open(`const tot‸al = 1\nprint(total)\n`)
@@ -96,7 +96,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const hoverText = (src: string): string | undefined => {
         const { document, cursor } = open(src)
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
-            ?.value.replace(/^```luaut\n|\n```$/g, "")
+            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
     }
     check("hover: an object literal key shows that property",
         hoverText(`const obj = { na‸me: "n", count: 2 }\nprint(obj)\n`), "(property) name: string")
@@ -278,6 +278,47 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     {
         const { document, cursor } = file("member.luaut", `import origin from "./shared/shapes"\norigin.‸\n`)
         contains("modules: members of a default import", completion(modules, document, cursor).map(i => i.label), "x")
+    }
+    {
+        // Export lists, a renamed export, and `export *`.
+        writeFileSync(join(root, "barrel.luaut"), [
+            `export * from "./shared/shapes"`,
+            `const five = 5`,
+            `type Pair = [number, number]`,
+            `export { five, Pair, five as cinq }`,
+            "",
+        ].join("\n"))
+        const { document } = file("fromBarrel.luaut",
+            `import { distance, ORIGIN, five, cinq, Pair } from "./barrel"\nconst pair: Pair = [1, 2]\nprint(distance(ORIGIN, ORIGIN), five, pair)\nconst wrong: string = cinq\n`)
+        check("modules: export lists and `export *` carry their types",
+            diagnostics(modules.get(document)).map(d => d.message), ["Type '5' is not assignable to 'string'"])
+        const location = importDefinition(modules, modules.get(document), { line: 0, character: 10 })
+        check("modules: definition follows `export *` to the declaring module", location?.uri.endsWith("shapes.luaut"), true)
+    }
+    {
+        const { document } = file("badExports.luaut",
+            `export { nothing }\nexport { nope } from "./shared/shapes"\nexport * from "./gone"\n`)
+        const messages = diagnostics(modules.get(document)).map(d => d.message)
+        contains("modules: exporting a name that does not exist", messages, "Cannot find name 'nothing' to export")
+        contains("modules: re-exporting a missing member", messages, "Module './shared/shapes' has no exported member 'nope'")
+        contains("modules: re-exporting from a missing module", messages, "Cannot find module './gone'")
+    }
+    {
+        // A module that does not exist yet, and then does.
+        const { document } = file("later.luaut", `import { soon } from "./notYet"\nprint(soon)\n`)
+        contains("modules: before the module exists",
+            diagnostics(modules.get(document)).map(d => d.message), "Cannot find module './notYet'")
+        writeFileSync(join(root, "notYet.luaut"), `export const soon = 1\n`)
+        check("modules: creating it re-checks the importer", diagnostics(modules.get(document)).map(d => d.message), [])
+    }
+    {
+        const { document, cursor } = file("typeImport.luaut",
+            `import { Po‸int } from "./shared/shapes"\nconst p: Point = { x: 1, y: 2 }\n`)
+        check("modules: a type-only import hovers as its type",
+            hoverText(document, cursor)?.includes("type Point = { x: number, y: number }"), true)
+        const typed = file("typePosition.luaut", `import { Point } from "./shared/shapes"\nconst q: Po‸ = { x: 1, y: 2 }\n`)
+        contains("modules: an imported type is offered in a type position",
+            completion(modules, typed.document, typed.cursor).map(i => i.label), "Point")
     }
     {
         // Editing the imported module invalidates the importer's cached result.

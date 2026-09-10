@@ -50,6 +50,22 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
                     const type = property?.type ?? types.typeOf.get(field.value)
                     return type && `(property) ${name}: ${pretty(type)}`
                 }
+                case "ImportSpecifier": {
+                    // A type-only import has no value worth showing (`any`);
+                    // the type it brings in is the answer.
+                    const alias = types.aliases.get(name)
+                    const binding = bindingOfNode(analysis, identifier)
+                    const value = binding && types.bindingType.get(binding.id)
+                    if (alias && (!value || value.kind === "any")) return `type ${name} = ${pretty(alias)}`
+                    break
+                }
+                case "ExportSpecifier": {
+                    // `export { Size }` can name a type, which has no binding.
+                    if (bindingOfNode(analysis, identifier)) break
+                    const alias = types.aliases.get(name)
+                    if (alias) return `type ${name} = ${pretty(alias)}`
+                    break
+                }
                 case "TypeAliasStatement":
                 case "ExportTypeAliasStatement":
                     if (parent.name === node) return aliasText(analysis, parent)
@@ -253,5 +269,9 @@ function keyword(binding: Binding): string {
 }
 
 function code(text: string): string {
-    return "```luaut\n" + text + "\n```"
+    // Its own grammar: VS Code colours a hover's code block with TextMate
+    // only, and the editor's luaut grammar deliberately leaves names and
+    // types to semantic tokens. Hover text is output this server formats,
+    // so a grammar for that format is exact rather than a guess.
+    return "```luaut-hover\n" + text + "\n```"
 }

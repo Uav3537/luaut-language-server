@@ -179,6 +179,17 @@ function identifier(analysis: Analysis, node: AnyNode, parent: AnyNode | undefin
         case "MappedTypeNode":
             if (parent.parameterId === node) return as("typeParameter", ["declaration"])
             break
+        case "ImportSpecifier": {
+            // A type-only import is a type, not an `any` value.
+            const binding = bindingOfNode(analysis, node)
+            const value = binding && analysis.types.bindingType.get(binding.id)
+            if (analysis.types.aliases.has(name) && (!value || value.kind === "any")) return as("type", ["declaration"])
+            break
+        }
+        case "ExportSpecifier":
+            // `export { Size }` can name a type, which has no value binding.
+            if (!bindingOfNode(analysis, node) && analysis.types.aliases.has(name)) return as("type")
+            break
         case "FunctionName":
             // `function a.b.c:d()` — `a` is a variable, `b`/`c` are properties,
             // `d` is the method being defined.

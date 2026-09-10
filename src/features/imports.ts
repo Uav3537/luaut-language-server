@@ -1,10 +1,10 @@
 /**
- * `import`, across files: completing the module path and the imported names,
- * and jumping from an import into the module it names.
+ * Modules, across files: completing module paths and the names they export,
+ * and jumping from an `import` (or `export ... from`) to the declaration.
  *
- * Completion works on the line's text rather than the AST — an import that is
- * being typed does not parse yet, and those are exactly the moments completion
- * is asked for.
+ * Completion works on the line's text rather than the AST — a statement that
+ * is being typed does not parse yet, and those are exactly the moments
+ * completion is asked for.
  */
 import { readdirSync } from "node:fs"
 import { dirname, resolve } from "node:path"
@@ -13,15 +13,19 @@ import {
     type Command, type CompletionItem, type Location, type Position, type Range,
 } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
-import { formatType, type BindingTarget, type ImportStatement } from "luaut-parser"
-import { pathOfUri, samePath, uriOfPath, type Analysis, type Analyzer } from "../analysis.js"
+import {
+    formatType,
+    type BindingTarget, type ExportAllStatement, type ExportNamedStatement, type Identifier, type ImportStatement,
+} from "luaut-parser"
+import { bindingOfNode, pathOfUri, samePath, uriOfPath, type Analysis, type Analyzer } from "../analysis.js"
 import { pathAt, toRange, type Spanned } from "../ast-utils.js"
 import { signaturesOf } from "./members.js"
 
 /** Keep the suggestion list open after picking a folder, to go one level in. */
 const SUGGEST_AGAIN: Command = { title: "Suggest", command: "editor.action.triggerSuggest" }
 
-/** Completion inside an import, or `undefined` when the cursor is not in one. */
+/** Completion inside an `import` or `export ... from`, or `undefined` when the
+ *  cursor is not in one. */
 export function importCompletion(
     analyzer: Analyzer,
     document: TextDocument,
@@ -33,16 +37,20 @@ export function importCompletion(
     const lineEnd = document.offsetAt({ line: position.line + 1, character: 0 })
     const before = text.slice(lineStart, cursor)
     const after = text.slice(cursor, lineEnd)
-    if (!/^\s*import\b/.test(before)) return undefined
+    if (!/^\s*(?:import|export)\b/.test(before)) return undefined
 
     // In the module path: `from "./sha|"`.
     const path = /\bfrom\s*(["'])([^"']*)$/.exec(before)
     if (path) return pathItems(document.uri, position, path[2])
 
     // In the braces: `import { a, | } from "./x"`.
-    if (/^\s*import\s+(?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)?\{[^}]*$/.test(before)) {
+    const braces = /^\s*(import|export)\s+(?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)?\{[^}]*$/.exec(before)
+    if (braces) {
         const module = /\}\s*from\s*(["'])([^"']+)\1/.exec(after)
-        return module ? nameItems(analyzer, document.uri, module[2], before) : []
+        if (module) return nameItems(analyzer, document.uri, module[2], before)
+        // `export { | }` with no `from` names this file's own declarations:
+        // ordinary completion answers that.
+        return braces[1] === "import" ? [] : undefined
     }
     return undefined
 }
@@ -130,60 +138,140 @@ function rangeBack(position: Position, length: number): Range {
     return { start: { line: position.line, character: position.character - length }, end: position }
 }
 
-/** Go-to-definition inside an import: the module string opens the module, an
- *  imported name jumps to its export. `undefined` when the cursor is not in an
- *  import at all, so the caller can fall back to ordinary definition. */
+// --------------------------------------------------------------------------
+// Definition
+// --------------------------------------------------------------------------
+
+/** A statement that names another module. */
+type ModuleReference = ImportStatement | ExportNamedStatement | ExportAllStatement
+
+/** Go-to-definition inside a statement that names another module: the module
+ *  string opens the module, a name jumps to where it is really declared —
+ *  through any `export { } from` and `export *` in between. `undefined` when
+ *  the cursor is not in such a statement, so the caller can fall back to
+ *  ordinary definition. */
 export function importDefinition(
     analyzer: Analyzer,
     analysis: Analysis,
     position: Position,
 ): Location | null | undefined {
     const path = pathAt(analysis.program, position, true)
-    const statement = path.find(n => n.type === "ImportStatement") as unknown as ImportStatement | undefined
-    if (!statement) return undefined
+    const statement = path.find(isModuleReference) as unknown as ModuleReference | undefined
+    if (!statement?.source) return undefined
 
     const target = analyzer.resolveModulePath(analysis.uri, statement.source.value)
     if (!target) return null
-    const at = (node?: Spanned): Location => ({
+    const fileStart: Location = {
         uri: uriOfPath(target),
-        range: node ? toRange(node) : { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
-    })
-
-    const node = path[path.length - 1] as unknown
-    let name: string | undefined
-    if (node === statement.defaultImport) name = "default"
-    for (const specifier of statement.specifiers) {
-        if (node === specifier.imported || node === specifier.local) name = specifier.imported.name
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
     }
-    if (!name) return at()
 
+    const name = referencedName(statement, path[path.length - 1] as unknown)
+    if (!name) return fileStart
     const module = analyzer.moduleAt(target)
-    return at(module && exportDeclaration(module, name))
+    const found = module && exportDeclaration(analyzer, module, name)
+    return found ? { uri: found.uri, range: toRange(found.node) } : fileStart
 }
 
-/** Where a module declares the export `name` (`"default"` for its default). */
-export function exportDeclaration(module: Analysis, name: string): Spanned | undefined {
+function isModuleReference(node: Spanned): boolean {
+    return node.type === "ImportStatement"
+        || node.type === "ExportAllStatement"
+        || (node.type === "ExportNamedStatement" && !!(node as unknown as ExportNamedStatement).source)
+}
+
+/** The name, as the other module exports it, that `node` stands for. */
+function referencedName(statement: ModuleReference, node: unknown): string | undefined {
+    switch (statement.type) {
+        case "ImportStatement":
+            if (node === statement.defaultImport) return "default"
+            return statement.specifiers.find(s => node === s.imported || node === s.local)?.imported.name
+        case "ExportNamedStatement":
+            return statement.specifiers.find(s => node === s.local || node === s.exported)?.local.name
+        case "ExportAllStatement":
+            return undefined
+    }
+}
+
+export interface Declaration {
+    uri: string
+    node: Spanned
+}
+
+/** Where the export `name` (`"default"` for the default) of `module` is
+ *  declared — following re-exports into the module that declares it. */
+export function exportDeclaration(
+    analyzer: Analyzer,
+    module: Analysis,
+    name: string,
+    seen = new Set<string>(),
+): Declaration | undefined {
+    // Re-exports can form a cycle; each (module, name) is visited once.
+    const key = `${module.uri}#${name}`
+    if (seen.has(key)) return undefined
+    seen.add(key)
+
+    const here = (node: unknown): Declaration => ({ uri: module.uri, node: node as Spanned })
+    const stars: string[] = []
+
     for (const statement of module.program.body.statements) {
         switch (statement.type) {
             case "ExportDefaultStatement":
-                if (name === "default") return statement as unknown as Spanned
+                if (name === "default") return here(statement)
                 break
             case "ExportTypeAliasStatement":
-                if (statement.alias.name.name === name) return statement.alias.name as unknown as Spanned
+                if (statement.alias.name.name === name) return here(statement.alias.name)
                 break
             case "ExportStatement": {
                 const declaration = statement.declaration
                 if (declaration.type === "FunctionDeclaration") {
-                    if (declaration.name.name === name) return declaration.name as unknown as Spanned
+                    if (declaration.name.name === name) return here(declaration.name)
                 } else {
                     for (const target of declaration.names) {
                         const found = patternNamed(target, name)
-                        if (found) return found
+                        if (found) return here(found)
                     }
                 }
                 break
             }
+            case "ExportNamedStatement": {
+                const specifier = statement.specifiers.find(s => s.exported.name === name)
+                if (!specifier) break
+                if (statement.source) {
+                    const next = moduleFrom(analyzer, module, statement.source.value)
+                    return next && exportDeclaration(analyzer, next, specifier.local.name, seen)
+                }
+                return here(localDeclaration(module, specifier.local) ?? specifier.local)
+            }
+            case "ExportAllStatement":
+                stars.push(statement.source.value)
+                break
         }
+    }
+
+    // `export *` never carries the default, and a name declared here wins.
+    if (name === "default") return undefined
+    for (const specifier of stars) {
+        const next = moduleFrom(analyzer, module, specifier)
+        const found = next && exportDeclaration(analyzer, next, name, seen)
+        if (found) return found
+    }
+    return undefined
+}
+
+function moduleFrom(analyzer: Analyzer, module: Analysis, specifier: string): Analysis | undefined {
+    const target = analyzer.resolveModulePath(module.uri, specifier)
+    return target ? analyzer.moduleAt(target) : undefined
+}
+
+/** The declaration of a top-level value or type that `export { x }` names. */
+function localDeclaration(module: Analysis, local: Identifier): unknown {
+    const binding = bindingOfNode(module, local)
+    if (binding?.declarationNode) return binding.declarationNode
+    for (const statement of module.program.body.statements) {
+        const alias = statement.type === "TypeAliasStatement" ? statement
+            : statement.type === "ExportTypeAliasStatement" ? statement.alias
+            : undefined
+        if (alias?.name.name === local.name) return alias.name
     }
     return undefined
 }

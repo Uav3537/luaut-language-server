@@ -80,7 +80,7 @@ const hovered = await request("textDocument/hover", {
 })
 // A *reference* hovers as its narrowed type; the `const` keyword shows on the
 // declaration itself.
-check("hover over the binding", hovered.result?.contents?.value, "```luaut\npart: Part\n```")
+check("hover over the binding", hovered.result?.contents?.value, "```luaut-hover\npart: Part\n```")
 
 const completed = await request("textDocument/completion", {
     textDocument: { uri },
