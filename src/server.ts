@@ -17,6 +17,7 @@ import { definition, references, highlights, prepareRename, rename } from "./fea
 import { completion } from "./features/completion.js"
 import { signatureHelp } from "./features/signatureHelp.js"
 import { documentSymbols } from "./features/symbols.js"
+import { semanticTokens, semanticTokensLegend } from "./features/semanticTokens.js"
 
 export interface ServerOptions extends AnalyzerOptions {}
 
@@ -43,9 +44,18 @@ export function createServer(connection: Connection, options: ServerOptions = {}
                 resolveProvider: false,
             },
             signatureHelpProvider: { triggerCharacters: ["(", ","], retriggerCharacters: [","] },
+            // Colours from the parser, not from patterns: whether a word is a
+            // keyword, a type or a name depends on where it stands.
+            semanticTokensProvider: { legend: semanticTokensLegend, full: true },
         },
         serverInfo: { name: "luaut-language-server" },
     }))
+
+    // --- semantic highlighting ---------------------------------------------
+    connection.languages.semanticTokens.on(p => {
+        const document = documents.get(p.textDocument.uri)
+        return document ? semanticTokens(analyzer.get(document)) : { data: [] }
+    })
 
     // --- diagnostics -------------------------------------------------------
     const publish = (document: TextDocument): void => {

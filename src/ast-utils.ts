@@ -49,19 +49,33 @@ export function containsPosition(node: Spanned, pos: Position, inclusive = false
 
 /** Every child node of `node`, in source order-ish (declaration order of the
  *  fields). Generic on purpose: it walks the object graph rather than knowing
- *  the node types, so a new node kind in the parser needs no change here. */
+ *  the node types, so a new node kind in the parser needs no change here.
+ *
+ *  Some nodes carry no span — the field wrappers of object literals
+ *  (`TableFieldNamed`) and type literals (`TableTypeProperty`). They are
+ *  walked *through*: their own children are returned in their place. Skipping
+ *  them would hide everything inside, which is how hovering an object key used
+ *  to land on the whole object. */
 export function children(node: Spanned): Spanned[] {
     const out: Spanned[] = []
-    for (const key of Object.keys(node)) {
+    collect(node, out)
+    return out
+}
+
+function collect(container: object, out: Spanned[]): void {
+    for (const key of Object.keys(container)) {
         if (key === "line" || key === "column") continue
-        const value = (node as unknown as Record<string, unknown>)[key]
-        if (Array.isArray(value)) {
-            for (const item of value) if (isSpanned(item)) out.push(item)
-        } else if (isSpanned(value)) {
-            out.push(value)
+        const value = (container as Record<string, unknown>)[key]
+        for (const item of Array.isArray(value) ? value : [value]) {
+            if (isSpanned(item)) out.push(item)
+            else if (isSpanlessNode(item)) collect(item, out)
         }
     }
-    return out
+}
+
+/** A node-shaped object (it has a `type` tag) that has no span of its own. */
+function isSpanlessNode(v: unknown): v is object {
+    return !!v && typeof v === "object" && typeof (v as { type?: unknown }).type === "string"
 }
 
 /** The chain of nodes containing `pos`, outermost first — the last entry is

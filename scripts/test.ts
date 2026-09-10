@@ -90,6 +90,98 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         Object.values(rename(analysis, cursor, "sum")?.changes ?? {})[0]?.length, 2)
 }
 
+// Keys, definitions and types. Each of these used to show nothing (or, for an
+// object key, the whole object).
+{
+    const hoverText = (src: string): string | undefined => {
+        const { document, cursor } = open(src)
+        return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
+            ?.value.replace(/^```luaut\n|\n```$/g, "")
+    }
+    check("hover: an object literal key shows that property",
+        hoverText(`const obj = { na‸me: "n", count: 2 }\nprint(obj)\n`), "(property) name: string")
+    check("hover: a declared value",
+        hoverText(`declare fo‸o: { bar: number }\n`), "declare foo: { bar: number }")
+    check("hover: a declared function",
+        hoverText(`declare function gre‸et(name: string): nil\n`), "declare function greet(name: string) -> nil")
+    check("hover: an overloaded declaration shows its own signature",
+        hoverText(`declare function f(x: string): string\ndeclare function ‸f(x: number): number\n`),
+        "declare function f(x: number) -> number  (+1 overload)")
+    check("hover: a mapped type's key",
+        hoverText(`type M<T> = { [‸K in keyof T]: T[K] }\n`)?.startsWith("(type parameter) K in "), true)
+    check("hover: an infer name", hoverText(`type R<T> = T extends () -> infer ‸U ? U : never\n`), "(type parameter) infer U")
+    check("hover: a use of an infer name", hoverText(`type R<T> = T extends () -> infer U ? ‸U : never\n`), "(type parameter) infer U")
+    check("hover: a type query resolves to the value's type",
+        hoverText(`const d = { v: 1 }\nconst c: typ‸eof d = { v: 2 }\n`), "{ v: number }")
+    check("hover: a type literal property",
+        hoverText(`declare foo: { ba‸r: number, baz?: string }\n`), "(property) bar: number")
+    check("hover: an optional type literal property",
+        hoverText(`declare foo: { bar: number, ba‸z?: string }\n`), "(property) baz?: string")
+    check("hover: a property name is not confused with a same-named type",
+        hoverText(`type bar = string\ndeclare foo: { bar: ba‸r }\n`), "type bar = string")
+    check("hover: a parameter in a function type",
+        hoverText(`declare foo: (co‸unt: number) -> string\n`), "(parameter) count: number")
+    check("hover: a primitive type", hoverText(`const n: numb‸er = 1\n`), "type number")
+    check("hover: an alias by reference",
+        hoverText(`type Shape = { r: number }\nconst s: Sha‸pe = { r: 1 }\n`), "type Shape = { r: number }")
+    check("hover: an alias by its own name",
+        hoverText(`type Sha‸pe = { r: number }\n`), "type Shape = { r: number }")
+    check("hover: a library type", hoverText(`const p: Pa‸rt = Instance.new("Part")\n`)?.startsWith("type Part = "), true)
+    check("hover: a generic parameter",
+        hoverText(`type Box<T extends string> = { value: ‸T }\n`), "(type parameter) T extends string")
+    check("hover: a long object type goes one member per line",
+        hoverText(`print(ma‸th)\n`)?.startsWith("math: {\n    floor: (x: number) -> number,"), true)
+}
+
+// --- semantic tokens ---------------------------------------------------
+// Each token decoded back to `word:type.modifier...`, so a test can say what a
+// word should be coloured as.
+{
+    const { semanticTokens, semanticTokensLegend } = await import("../src/features/semanticTokens.js")
+    const tokensOf = (src: string): string[] => {
+        const { document } = open(src)
+        const data = semanticTokens(analyzer.get(document)).data
+        const lines = document.getText().split("\n")
+        const out: string[] = []
+        let line = 0
+        let character = 0
+        for (let i = 0; i < data.length; i += 5) {
+            line += data[i]
+            character = data[i] === 0 ? character + data[i + 1] : data[i + 1]
+            const word = lines[line].slice(character, character + data[i + 2])
+            const type = semanticTokensLegend.tokenTypes[data[i + 3]]
+            const modifiers = semanticTokensLegend.tokenModifiers.filter((_, bit) => data[i + 4] & (1 << bit))
+            out.push([`${word}:${type}`, ...modifiers].join("."))
+        }
+        return out
+    }
+
+    const conditional = tokensOf(`type Ret<T> = T extends (...unknown) -> infer R ? R : never\n`)
+    contains("semantic: `extends` in a conditional is a keyword", conditional, "extends:keyword")
+    contains("semantic: `type` declaring an alias is a keyword", conditional, "type:keyword")
+    contains("semantic: the alias name", conditional, "Ret:type.declaration")
+    contains("semantic: a type parameter's declaration", conditional, "T:typeParameter.declaration")
+    contains("semantic: a type parameter's use", conditional, "T:typeParameter")
+    contains("semantic: `infer` is a keyword", conditional, "infer:keyword")
+    contains("semantic: the inferred name", conditional, "R:typeParameter.declaration")
+    contains("semantic: a primitive type", conditional, "unknown:type.defaultLibrary")
+
+    const call = tokensOf(`print(type(1))\n`)
+    contains("semantic: `type(x)` in code is a call, not a keyword", call, "type:function.defaultLibrary")
+
+    const declared = tokensOf(`declare function greet(name: string): nil\nconst d = { v: 1 }\nconst c: typeof d = d\n`)
+    contains("semantic: a declared function's name", declared, "greet:function.declaration")
+    contains("semantic: a declared function's parameter", declared, "name:parameter.declaration")
+    contains("semantic: `declare` is a keyword", declared, "declare:keyword")
+    contains("semantic: `typeof` in a type is a keyword", declared, "typeof:keyword")
+    contains("semantic: the queried value is a variable", declared, "d:variable.readonly")
+    contains("semantic: a const declaration", declared, "c:variable.declaration.readonly")
+
+    const literal = tokensOf(`declare foo: { readonly bar: number, run: (x: number) -> nil }\n`)
+    contains("semantic: a readonly property in a type", literal, "bar:property.declaration.readonly")
+    contains("semantic: a function-typed property is a method", literal, "run:method.declaration")
+}
+
 // --- diagnostics -------------------------------------------------------
 {
     const { document } = open(`const n: number = "text"\n`)

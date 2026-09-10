@@ -17,6 +17,7 @@ export {
 export { completion } from "./features/completion.js"
 export { signatureHelp } from "./features/signatureHelp.js"
 export { documentSymbols } from "./features/symbols.js"
+export { semanticTokens, semanticTokensLegend } from "./features/semanticTokens.js"
 export { membersOf, signaturesOf, signatureLabel, type Member } from "./features/members.js"
 
 export {

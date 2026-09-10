@@ -17,7 +17,8 @@ luaut-language-server --stdio
 | request | notes |
 |---|---|
 | `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke |
-| `hover` | the type as luaut writes it — the **narrowed** type at a reference, so a guarded `v` reads `string`, not `string \| nil` |
+| `hover` | the type as luaut writes it — the **narrowed** type at a reference, so a guarded `v` reads `string`, not `string \| nil`. Also every name in a type or definitions file: `declare` names (with their overload count), alias names, object-type properties, type parameters, `infer` names, and any type annotation, which reads as what it resolves to |
+| `semanticTokens` | colours from the parser, not from patterns — see [Highlighting](#highlighting) |
 | `definition` | the binding's declaration |
 | `references`, `documentHighlight` | every use of the binding |
 | `rename`, `prepareRename` | refuses names that are not identifiers, and builtins from the definitions files |
@@ -68,6 +69,21 @@ the `declare` statements in the definitions passed to `Analyzer`. Adding a
 global to a `.d.luaut` is all it takes for the editor to stop calling it
 undefined.
 
+### Highlighting
+
+A word's role in luaut depends on where it stands: `extends` is a keyword in a
+type and a name elsewhere, `type Foo = ...` declares an alias while `type(x)`
+calls a builtin, `typeof x` in a type is a query while `typeof(v)` in code is a
+call. A TextMate grammar only sees characters, so it can only guess — and
+guessed `extends (` into a function call.
+
+So `semanticTokens` classifies every token from the same lexer and AST the
+analyzer uses: declarations, parameters, properties, methods, types, type
+parameters, and soft keywords only where the AST did not claim the word as a
+name. The grammar in the editor extension keeps just what characters decide
+alone — comments, strings, numbers, reserved words — so a file looks right
+before the server answers, and never disagrees with it after.
+
 ## Not yet
 
 - **One file at a time.** No workspace indexing, so no cross-file
@@ -75,7 +91,7 @@ undefined.
   opened.
 - **No formatting** — there is no luaut printer yet (the compiler owns
   emitting Luau, and it emits *Luau*, not luaut).
-- No code actions, inlay hints, semantic tokens, or folding ranges.
+- No code actions, inlay hints, or folding ranges.
 - Everything `luaut-parser` does not check is invisible here too: unknown
   properties, writes to `readonly`, generic constraints at call sites,
   metatables.
