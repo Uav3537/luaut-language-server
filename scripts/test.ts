@@ -579,7 +579,9 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
 
     const loose = projects.get(TextDocument.create(
         pathToFileURL(join(dirname(root), `luaut-no-config-${Date.now()}`, "x.luaut")).href, "luaut", 1, "print(1)\n"))
-    check("projects: a file no config covers has no types at all", [loose.project.config, loose.types.aliases.size], [undefined, 0])
+    check("projects: a file no config covers has only the language's own types",
+        [loose.project.config, [...loose.types.aliases.keys()].sort().join(" ")],
+        [undefined, "Exclude Extract Falsy Mutable NonNullable Omit Parameters Partial Pick Readonly Record Required ReturnType Truthy"])
 
     check("projects: two configs in one folder are reported on both",
         projects.get(openFile("dup/x.luaut", "")).project.problems.length, 2)
