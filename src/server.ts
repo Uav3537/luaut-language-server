@@ -6,11 +6,12 @@
  * thinking lives in `features/`; nothing here knows about luaut.
  */
 import {
-    createConnection, ProposedFeatures, TextDocuments, TextDocumentSyncKind,
-    type Connection, type InitializeParams, type InitializeResult,
+    createConnection, DiagnosticSeverity, ProposedFeatures, TextDocuments, TextDocumentSyncKind,
+    type Connection, type Diagnostic, type InitializeParams, type InitializeResult,
 } from "vscode-languageserver/node"
 import { TextDocument } from "vscode-languageserver-textdocument"
-import { Analyzer, pathOfUri, samePath, type AnalyzerOptions } from "./analysis.js"
+import type { ConfigProblem } from "luaut-parser"
+import { Analyzer, pathOfUri, samePath, uriOfPath, type Analysis, type AnalyzerOptions } from "./analysis.js"
 import { importDefinition } from "./features/imports.js"
 import { diagnostics } from "./features/diagnostics.js"
 import { hover } from "./features/hover.js"
@@ -27,7 +28,8 @@ export interface ServerOptions extends AnalyzerOptions {}
  *  transport, and so the tests can drive it without spawning anything. */
 export function createServer(connection: Connection, options: ServerOptions = {}): void {
     const documents = new TextDocuments(TextDocument)
-    // Imports read open documents before disk, so they see unsaved edits.
+    // Imports and configs read open documents before disk, so they see
+    // unsaved edits.
     const analyzer = new Analyzer({
         ...options,
         openDocument: path => documents.all().find(document => {
@@ -67,22 +69,73 @@ export function createServer(connection: Connection, options: ServerOptions = {}
     })
 
     // --- diagnostics -------------------------------------------------------
-    const publish = (document: TextDocument): void => {
-        void connection.sendDiagnostics({
-            uri: document.uri,
-            version: document.version,
-            diagnostics: diagnostics(analyzer.get(document)),
-        })
+    /** Config files currently showing problems, so fixed ones get cleared. */
+    let configUris = new Set<string>()
+
+    const publishAll = (): void => {
+        const problems = new Map<string, ConfigProblem[]>()
+        for (const document of documents.all()) {
+            const analysis = analyzer.get(document)
+            void connection.sendDiagnostics({
+                uri: document.uri,
+                version: document.version,
+                diagnostics: [...diagnostics(analysis), ...projectHint(analysis)],
+            })
+            // A problem is shown on the config (or sourcemap) it is about, once
+            // however many files share that config.
+            for (const problem of analysis.project.problems) {
+                const uri = uriOfPath(problem.file)
+                const list = problems.get(uri) ?? []
+                if (!list.some(p => p.message === problem.message && p.line === problem.line)) list.push(problem)
+                problems.set(uri, list)
+            }
+        }
+        for (const [uri, list] of problems) {
+            void connection.sendDiagnostics({ uri, diagnostics: list.map(problemDiagnostic) })
+        }
+        for (const uri of configUris) {
+            if (!problems.has(uri)) void connection.sendDiagnostics({ uri, diagnostics: [] })
+        }
+        configUris = new Set(problems.keys())
     }
 
-    documents.onDidOpen(e => publish(e.document))
-    // Any change can affect every open file that imports the changed one, so
-    // all of them are re-checked; unchanged ones come straight from the cache.
-    const publishAll = (): void => {
-        for (const document of documents.all()) publish(document)
+    const problemDiagnostic = (problem: ConfigProblem): Diagnostic => {
+        const line = Math.max((problem.line ?? 1) - 1, 0)
+        const character = Math.max((problem.column ?? 1) - 1, 0)
+        // Underline to the end of the line: the option or entry the problem is about.
+        const text = analyzer.readFile(problem.file)?.split("\n")[line] ?? ""
+        const end = Math.max(text.replace(/\r$/, "").trimEnd().length, character + 1)
+        return {
+            range: { start: { line, character }, end: { line, character: end } },
+            severity: DiagnosticSeverity.Error,
+            source: "luaut",
+            code: "config",
+            message: problem.message,
+        }
     }
+
+    /** A file no config covers gets no types at all, which is easy to miss —
+     *  so say so, once, at the top of the file. */
+    const projectHint = (analysis: Analysis): Diagnostic[] => {
+        const { project } = analysis
+        if (project.fixed || project.config || !pathOfUri(analysis.uri)) return []
+        return [{
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            severity: DiagnosticSeverity.Information,
+            source: "luaut",
+            code: "no-config",
+            message: "No luaut.config.json applies to this file, so no types are loaded — not even `print`. "
+                + "Add one to this folder or a folder above, such as "
+                + "{ \"types\": [\"luau\"], \"paths\": {}, \"sourceMap\": null }",
+        }]
+    }
+
+    // Any change can affect every open file that imports the changed one, or
+    // shares its config, so all of them are re-checked; unchanged ones come
+    // straight from the cache.
+    documents.onDidOpen(publishAll)
     documents.onDidChangeContent(publishAll)
-    // A module edited, created or deleted outside the editor.
+    // A module, config, type library or sourcemap changed outside the editor.
     connection.onDidChangeWatchedFiles(publishAll)
     documents.onDidClose(e => {
         analyzer.forget(e.document.uri)

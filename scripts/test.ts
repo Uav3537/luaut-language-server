@@ -16,7 +16,14 @@ import { signatureHelp } from "../src/features/signatureHelp.js"
 import { documentSymbols } from "../src/features/symbols.js"
 import type { Position } from "vscode-languageserver"
 
-const analyzer = new Analyzer()
+import { readFileSync } from "node:fs"
+import { parse } from "luaut-parser"
+
+// The parser has no types built in. These tests analyze against the Luau and
+// Roblox libraries, as a project whose config lists them would.
+const testLibs = ["luau", "roblox"].map(name =>
+    parse(readFileSync(new URL(`../node_modules/@luaut/${name}/index.d.luaut`, import.meta.url), "utf8")))
+const analyzer = new Analyzer({ libs: testLibs })
 let passed = 0
 const failures: string[] = []
 
@@ -228,7 +235,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         "",
     ].join("\n"))
 
-    const modules = new Analyzer()
+    const modules = new Analyzer({ libs: testLibs })
     const file = (name: string, text: string) => {
         const index = text.indexOf("‸")
         const clean = index < 0 ? text : text.slice(0, index) + text.slice(index + 1)
@@ -362,6 +369,93 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("completion: and nothing else — no variables inside quotes", services.includes("print"), false)
     contains("completion: through a method call, mid-word", labelsAt(`game:GetService("Rep‸")\n`), "ReplicatedStorage")
     check("completion: a string with no expected values offers nothing", labelsAt(`print("‸")\n`), [])
+}
+
+// --- projects ----------------------------------------------------------
+// Real folders: configs, installed type libraries, aliases and a sourcemap.
+{
+    const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { dirname, join } = await import("node:path")
+    const { fileURLToPath, pathToFileURL } = await import("node:url")
+
+    const root = mkdtempSync(join(tmpdir(), "luaut-project-"))
+    const put = (path: string, text: string): void => {
+        mkdirSync(dirname(join(root, path)), { recursive: true })
+        writeFileSync(join(root, path), text)
+    }
+    // The type libraries, installed the way a project would have them.
+    for (const name of ["luau", "roblox"]) {
+        const installed = fileURLToPath(new URL(`../node_modules/@luaut/${name}/`, import.meta.url))
+        for (const file of ["package.json", "index.d.luaut"]) {
+            put(`node_modules/@luaut/${name}/${file}`, readFileSync(join(installed, file), "utf8"))
+        }
+    }
+
+    put("game/luaut.config.json", JSON.stringify({ types: ["roblox"], paths: { "@shared/*": ["shared/*"] }, sourceMap: "sourcemap.json" }))
+    put("game/shared/util.luaut", "export const VALUE = 1\n")
+    put("game/sourcemap.json", JSON.stringify({
+        name: "Game", className: "DataModel", children: [
+            { name: "ReplicatedStorage", className: "ReplicatedStorage", children: [
+                { name: "Remotes", className: "Folder" },
+                { name: "Main", className: "ModuleScript", filePaths: ["main.luau"] },
+            ] },
+        ],
+    }))
+    put("game/lite/luaut.config.json", JSON.stringify({ types: ["luau"], paths: {}, sourceMap: null }))
+    put("dup/luaut.config.json", "{}")
+    put("dup/luaut.config.jsonc", "{}")
+    put("missing/luaut.config.json", JSON.stringify({ types: ["nope"], paths: {}, sourceMap: null }))
+
+    const projects = new Analyzer()
+    const openFile = (path: string, text: string): TextDocument => {
+        put(path, text)
+        return TextDocument.create(pathToFileURL(join(root, path)).href, "luaut", 1, text)
+    }
+
+    const main = projects.get(openFile("game/main.luaut", [
+        `import { VALUE } from "@shared/util"`,
+        `const remotes: Folder = script.Parent.Remotes`,
+        `const value: number = VALUE`,
+        `const wrong: string = game.ReplicatedStorage.Remotes`,
+        "",
+    ].join("\n")))
+    check("projects: a file takes its folder's config", main.project.config?.path.endsWith(join("game", "luaut.config.json")), true)
+    const mainMessages = diagnostics(main).map(d => d.message)
+    check("projects: types, a paths alias and the sourcemap all apply — only the deliberate error remains",
+        mainMessages.length === 1 && mainMessages[0].endsWith("is not assignable to 'string'"), true)
+
+    const lite = projects.get(openFile("game/lite/x.luaut", "print(game)\n"))
+    check("projects: a nested config replaces the outer one",
+        [lite.project.config?.path.endsWith(join("lite", "luaut.config.json")), lite.types.aliases.has("Part"), lite.types.aliases.has("Partial")],
+        [true, false, true])
+
+    const loose = projects.get(TextDocument.create(
+        pathToFileURL(join(dirname(root), `luaut-no-config-${Date.now()}`, "x.luaut")).href, "luaut", 1, "print(1)\n"))
+    check("projects: a file no config covers has no types at all", [loose.project.config, loose.types.aliases.size], [undefined, 0])
+
+    check("projects: two configs in one folder are reported on both",
+        projects.get(openFile("dup/x.luaut", "")).project.problems.length, 2)
+    check("projects: a missing type library is reported",
+        projects.get(openFile("missing/x.luaut", "")).project.problems.map(problem => problem.message),
+        ["Cannot find type library 'nope'. Install it with: npm i -D @luaut/nope"])
+
+    // Editing a config re-checks the files under it.
+    put("game/lite/luaut.config.json", JSON.stringify({ types: ["roblox"], paths: {}, sourceMap: null }))
+    check("projects: editing a config re-checks its files",
+        projects.get(openFile("game/lite/x.luaut", "print(game)\n")).types.aliases.has("Part"), true)
+
+    const labelsAt = (path: string, text: string): string[] => {
+        const index = text.indexOf("‸")
+        const document = openFile(path, text.slice(0, index) + text.slice(index + 1))
+        return completion(projects, document, document.positionAt(index)).map(i => i.label)
+    }
+    contains("projects: a paths alias is offered as an import path",
+        labelsAt("game/c1.luaut", `import { VALUE } from "@‸"\n`), "@shared/")
+    contains("projects: and what is inside it",
+        labelsAt("game/c2.luaut", `import { VALUE } from "@shared/‸"\n`), "util")
+
+    rmSync(root, { recursive: true, force: true })
 }
 
 // --- diagnostics -------------------------------------------------------

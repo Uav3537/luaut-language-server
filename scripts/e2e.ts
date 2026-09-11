@@ -2,12 +2,29 @@
  * End-to-end check: launch the built binary the way an editor does (stdio,
  * LSP framing) and hold a short conversation with it. This is the only test
  * that exercises `server.ts` — everything else calls the features directly.
+ *
+ * The server has no types built in, so the conversation happens in a real
+ * project folder: a `luaut.config.json` and the type libraries it names.
  */
 import { spawn } from "node:child_process"
-import { fileURLToPath } from "node:url"
-import { dirname, resolve } from "node:path"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { dirname, join, resolve } from "node:path"
 
 const here = dirname(fileURLToPath(import.meta.url))
+
+const root = mkdtempSync(join(tmpdir(), "luaut-e2e-"))
+for (const name of ["luau", "roblox"]) {
+    const installed = resolve(here, `../node_modules/@luaut/${name}`)
+    const target = join(root, "node_modules", "@luaut", name)
+    mkdirSync(target, { recursive: true })
+    for (const file of ["package.json", "index.d.luaut"]) {
+        writeFileSync(join(target, file), readFileSync(join(installed, file), "utf8"))
+    }
+}
+writeFileSync(join(root, "luaut.config.json"), JSON.stringify({ types: ["roblox"], paths: {}, sourceMap: null }))
+
 const child = spawn(process.execPath, [resolve(here, "../dist/cli.js"), "--stdio"], {
     stdio: ["pipe", "pipe", "inherit"],
 })
@@ -53,7 +70,7 @@ function notify(method: string, params: unknown): void {
     send({ jsonrpc: "2.0", method, params })
 }
 
-const uri = "file:///e2e.luaut"
+const uri = pathToFileURL(join(root, "e2e.luaut")).href
 const failures: string[] = []
 function check(name: string, actual: unknown, expected: unknown): void {
     const a = JSON.stringify(actual)
@@ -92,7 +109,7 @@ check("completion over the wire", labels.includes("Name"), true)
 
 // Diagnostics arrive as a notification, on open and after every change.
 await new Promise(r => setTimeout(r, 200))
-const published = notifications.filter(n => n.method === "textDocument/publishDiagnostics")
+const published = notifications.filter(n => n.method === "textDocument/publishDiagnostics" && n.params.uri === uri)
 check("diagnostics were published", published.length > 0, true)
 check("the type error is among them",
     published.at(-1)?.params.diagnostics.some((d: { message: string }) => /number/.test(d.message)),
@@ -100,6 +117,7 @@ check("the type error is among them",
 
 await request("shutdown", null)
 notify("exit", null)
+rmSync(root, { recursive: true, force: true })
 
 for (const failure of failures) console.log(`FAIL ${failure}`)
 console.log(failures.length ? `\n${failures.length} failed` : "\ne2e ok")

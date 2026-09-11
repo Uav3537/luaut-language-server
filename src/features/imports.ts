@@ -41,7 +41,7 @@ export function importCompletion(
 
     // In the module path: `from "./sha|"`.
     const path = /\bfrom\s*(["'])([^"']*)$/.exec(before)
-    if (path) return pathItems(document.uri, position, path[2])
+    if (path) return pathItems(analyzer, document.uri, position, path[2])
 
     // In the braces: `import { a, | } from "./x"`.
     const braces = /^\s*(import|export)\s+(?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)?\{[^}]*$/.exec(before)
@@ -55,24 +55,59 @@ export function importCompletion(
     return undefined
 }
 
-function pathItems(fromUri: string, position: Position, typed: string): CompletionItem[] {
+function pathItems(analyzer: Analyzer, fromUri: string, position: Position, typed: string): CompletionItem[] {
     const from = pathOfUri(fromUri)
     if (!from) return []
 
-    // Only relative paths resolve; until one is started, offer the ways in.
-    if (!typed.startsWith("./") && !typed.startsWith("../")) {
-        const range = rangeBack(position, typed.length)
-        return ["./", "../"].map(label => ({
-            label,
-            kind: CompletionItemKind.Folder,
-            textEdit: { range, newText: label },
-            command: SUGGEST_AGAIN,
-        }))
+    if (typed.startsWith("./") || typed.startsWith("../")) {
+        const slash = typed.lastIndexOf("/")
+        return entryItems(resolve(dirname(from), typed.slice(0, slash + 1)), rangeBack(position, typed.length - slash - 1), from)
     }
 
-    const slash = typed.lastIndexOf("/")
-    const directory = resolve(dirname(from), typed.slice(0, slash + 1))
-    const range = rangeBack(position, typed.length - slash - 1)
+    // Not started yet, or an alias: offer the ways in — `./`, `../` and each
+    // `paths` alias — and inside an alias, what its targets hold.
+    const items = new Map<string, CompletionItem>()
+    const whole = rangeBack(position, typed.length)
+    const offer = (label: string, folder: boolean): void => {
+        if (!label.startsWith(typed) || label === typed) return
+        items.set(label, {
+            label,
+            kind: folder ? CompletionItemKind.Folder : CompletionItemKind.File,
+            textEdit: { range: whole, newText: label },
+            command: folder ? SUGGEST_AGAIN : undefined,
+        })
+    }
+    offer("./", true)
+    offer("../", true)
+
+    const config = analyzer.projectOf(fromUri).config
+    for (const [pattern, targets] of Object.entries(config?.paths ?? {})) {
+        const star = pattern.indexOf("*")
+        if (star < 0) {
+            offer(pattern, false)
+            continue
+        }
+        const prefix = pattern.slice(0, star)
+        if (!typed.startsWith(prefix)) {
+            offer(prefix, true)
+            continue
+        }
+        const rest = typed.slice(prefix.length)
+        const slash = rest.lastIndexOf("/")
+        const range = rangeBack(position, rest.length - slash - 1)
+        for (const target of targets) {
+            const cut = target.indexOf("*")
+            const head = cut < 0 ? target : target.slice(0, cut)
+            for (const item of entryItems(resolve(config!.baseUrl, head + rest.slice(0, slash + 1)), range, from)) {
+                items.set(item.label, item)
+            }
+        }
+    }
+    return [...items.values()]
+}
+
+/** The luaut files and folders in `directory`, as import path completions. */
+function entryItems(directory: string, range: Range, from: string): CompletionItem[] {
     let entries
     try {
         entries = readdirSync(directory, { withFileTypes: true })
