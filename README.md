@@ -16,13 +16,13 @@ luaut-language-server --stdio
 
 | request | notes |
 |---|---|
-| `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke |
+| `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke. `--@luaut-nocheck`, `--@luaut-ignore` and `--@luaut-expect-error` silence scope and type errors |
 | `hover` | the type as luaut writes it — the **narrowed** type at a reference, so a guarded `v` reads `string`, not `string \| nil`. Also every name in a type or definitions file: `declare` names (with their overload count), classes (`declare class Part extends BasePart { ...what it adds }`), alias names, object-type properties, type parameters, `infer` names, and any type annotation, which reads as what it resolves to |
 | `semanticTokens` | colours from the parser, not from patterns — see [Highlighting](#highlighting) |
 | `definition` | the binding's declaration — and from an `import`, the export in the other module |
 | `references`, `documentHighlight` | every use of the binding |
 | `rename`, `prepareRename` | refuses names that are not identifiers, and builtins from the definitions files |
-| `completion` | members after `.` / `:` (never the globals there), names in scope, type names in a type position; inside an `import`, module paths and the exported names |
+| `completion` | members after `.` / `:` (never the globals there), names in scope, type names in a type position; inside an `import`, module paths and the exported names. A name another file of the project exports is offered too, and picking it adds `import { name } from "./path"` at the top (or joins the import of that file already there). With the Roblox types, each service is offered, and picking one adds `const Players = game:GetService("Players")` under the imports and the services already declared |
 | `signatureHelp` | every overload, with the active parameter — `:` calls count `self` for you |
 | `documentSymbol` | functions, type aliases, top-level bindings |
 

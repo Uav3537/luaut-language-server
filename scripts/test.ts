@@ -275,6 +275,30 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
 }
 
+// --- services and directives ---------------------------------------------
+{
+    const serviceEdit = (src: string, label: string) => {
+        const { document, cursor } = open(src)
+        const item = completion(analyzer, document, cursor).find(i => i.label === label && i.additionalTextEdits)
+        return item?.additionalTextEdits?.map(e => [e.range.start.line, e.range.start.character, e.newText])
+    }
+    check("services: a service declares itself above the code",
+        serviceEdit(`print(1)\nPlay‸\n`, "Players"), [[0, 0, `const Players = game:GetService("Players")\n\n`]])
+    check("services: after the services already declared",
+        serviceEdit(`const RS = game:GetService("ReplicatedStorage")\nprint(RS)\nPlay‸\n`, "Players"),
+        [[1, 0, `const Players = game:GetService("Players")\n`]])
+    check("services: not once it is declared",
+        serviceEdit(`const Players = game:GetService("Players")\nPlay‸\n`, "Players"), undefined)
+
+    const diagnosticsOf = (src: string): string[] => diagnostics(analyzer.get(open(src).document)).map(d => d.message)
+    check("directives: ignore, expect-error and nocheck", [
+        diagnosticsOf(`--@luaut-ignore\nconst a: number = "x"\n`),
+        diagnosticsOf(`--@luaut-expect-error\nconst a: number = 1\n`),
+        diagnosticsOf(`--@luaut-nocheck\nconst a: number = "x"\nnope()\n`),
+        diagnosticsOf(`--@luaut-nocheck\nconst a = \n`).length,
+    ], [[], ["Unused '@luaut-expect-error' directive"], [], 1])
+}
+
 // --- modules -----------------------------------------------------------
 // Real files in a temp folder, since imports resolve against the file system.
 {
@@ -324,6 +348,23 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     {
         const { document } = file("typed.luaut", `import { ORIGIN } from "./shared/shapes"\nconst wrong: string = ORIGIN\n`)
         check("modules: an import is type-checked", diagnostics(modules.get(document)).length, 1)
+    }
+    {
+        const edits = (name: string, text: string, label: string) => {
+            const { document, cursor } = file(name, text)
+            const item = completion(modules, document, cursor).find(i => i.label === label && i.additionalTextEdits)
+            return item?.additionalTextEdits?.map(e => [e.range.start.line, e.range.start.character, e.newText])
+        }
+        check("auto-import: another file's export adds its import above the code",
+            edits("auto1.luaut", `print(1)\ndist‸\n`, "distance"), [[0, 0, `import { distance } from "./shared/shapes"\n\n`]])
+        check("auto-import: after the imports already there",
+            edits("auto2.luaut", `import { x } from "./other"\nprint(x)\nORIG‸\n`, "ORIGIN"), [[1, 0, `import { ORIGIN } from "./shared/shapes"\n`]])
+        check("auto-import: joins an import of the same file",
+            edits("auto3.luaut", `import { ORIGIN } from "./shared/shapes"\nprint(ORIGIN)\ndist‸\n`, "distance"), [[0, 15, ", distance"]])
+        check("auto-import: a type in a type position",
+            edits("auto4.luaut", `const p: Poi‸ = { x: 1, y: 2 }\n`, "Point"), [[0, 0, `import { Point } from "./shared/shapes"\n\n`]])
+        check("auto-import: not for a name already in scope",
+            edits("auto5.luaut", `const distance = 1\ndist‸\n`, "distance"), undefined)
     }
     {
         const { document, cursor } = file("paths.luaut", `import { ORIGIN } from "./‸"\n`)

@@ -15,6 +15,7 @@ import type { TextDocument } from "vscode-languageserver-textdocument"
 import { formatType, isClassType, type Expression, type Type } from "luaut-parser"
 import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
+import { importItems, serviceItems } from "./autoImport.js"
 import { importCompletion } from "./imports.js"
 import { membersOf, signaturesOf, signatureLabel } from "./members.js"
 
@@ -93,10 +94,21 @@ export function completion(
             kind: CompletionItemKind.Keyword,
             detail: "type",
         }))
-        return [...named, ...primitives]
+        const typeNames = new Set(first.analysis.types.aliases.keys())
+        const imported = importItems(analyzer, analyzer.get(document), true, typeNames)
+        return [...named, ...primitives, ...imported]
     }
 
-    return valueItems(first.analysis, at)
+    // Names in scope, then what picking an item can bring into scope: another
+    // file's export (with its `import`), or a service (with its `GetService`).
+    const taken = new Set<string>()
+    for (const binding of first.analysis.scopes.bindings.values()) taken.add(binding.name)
+    const current = analyzer.get(document)
+    return [
+        ...valueItems(first.analysis, at),
+        ...importItems(analyzer, current, false, taken),
+        ...serviceItems(current, taken),
+    ]
 }
 
 /** Completion inside a string literal, or `undefined` when the cursor is not

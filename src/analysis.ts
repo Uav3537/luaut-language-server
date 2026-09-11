@@ -24,7 +24,7 @@ import {
     findConfig, resolveTypeLibraries, moduleCandidates, sourceMapTypes,
     type Program, type ScopeAnalysis, type TypeAnalysis, type ParseError, type ModuleExports,
     type Binding, type Identifier, type Type, type LuautConfig, type ConfigProblem, type ProjectHost,
-    type SourceMapTypes,
+    type SourceMapTypes, type Directives,
 } from "luaut-parser"
 import type { TextDocument } from "vscode-languageserver-textdocument"
 import { membersOf } from "./features/members.js"
@@ -35,6 +35,8 @@ export interface Analysis {
     readonly source: string
     readonly program: Program
     readonly parseErrors: readonly ParseError[]
+    /** `--@luaut-nocheck` / `--@luaut-ignore` / `--@luaut-expect-error`. */
+    readonly directives: Directives
     readonly scopes: ScopeAnalysis
     readonly types: TypeAnalysis
     /** Every file this analysis read — imported modules, its config, type
@@ -428,7 +430,7 @@ export class Analyzer {
         const libs = script ? [...context.libs, script] : context.libs
         const globals = script ? [...context.globals, "script"] : context.globals
 
-        const { program, errors } = parseWithRecovery(source)
+        const { program, errors, directives } = parseWithRecovery(source)
         const scopes = analyzeScopes(program, { builtinGlobals: [...globals] })
         const dependencies = new Map(context.reads)
         const types = analyzeTypes(program, scopes, {
@@ -450,7 +452,7 @@ export class Analyzer {
                 return exports
             },
         })
-        return { uri, version, source, program, parseErrors: errors, scopes, types, dependencies, project: context.project }
+        return { uri, version, source, program, parseErrors: errors, directives, scopes, types, dependencies, project: context.project }
     }
 
     private exportsOf(path: string, importing: Set<string>): ModuleExports | undefined {
