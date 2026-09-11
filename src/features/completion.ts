@@ -30,6 +30,10 @@ export function completion(
     const inImport = importCompletion(analyzer, document, position)
     if (inImport) return inImport
 
+    // Inside a string argument: the values its parameter accepts.
+    const inString = stringCompletion(analyzer, document, position)
+    if (inString) return inString
+
     const source = document.getText()
     const offset = document.offsetAt(position)
 
@@ -93,6 +97,61 @@ export function completion(
     }
 
     return valueItems(first.analysis, at)
+}
+
+/** Completion inside a string literal, or `undefined` when the cursor is not
+ *  in one. A string that is a call argument offers the string values its
+ *  parameter accepts — `game:GetService("|")` lists the services. Any other
+ *  string offers nothing: a variable name is never what goes inside quotes. */
+function stringCompletion(
+    analyzer: Analyzer,
+    document: TextDocument,
+    position: Position,
+): CompletionItem[] | undefined {
+    const analysis = analyzer.get(document)
+    const path = pathAt(analysis.program, position, false)
+    const literal = [...path].reverse().find(n => n.type === "StringLiteral")
+    if (!literal) return undefined
+
+    const expected = analysis.types.expectedTypeOf.get(literal as unknown as Expression)
+    const values = stringLiterals(expected, analysis.types.aliases)
+    if (!values.length) return []
+
+    // Replace what is between the quotes. A string spanning lines is left to
+    // the editor's own filtering.
+    const line = literal.line.start - 1
+    const range = literal.line.start === literal.line.end
+        ? {
+            start: { line, character: literal.column.start },
+            end: { line, character: literal.column.end - 2 },
+        }
+        : undefined
+    return values.map(value => ({
+        label: value,
+        kind: CompletionItemKind.Constant,
+        ...(range ? { textEdit: { range, newText: value } } : {}),
+    }))
+}
+
+/** The string literal types a type admits — through unions, aliases and a
+ *  type parameter's constraint. */
+function stringLiterals(type: Type | undefined, aliases: ReadonlyMap<string, Type>, seen = new Set<Type>()): string[] {
+    if (!type || seen.has(type)) return []
+    seen.add(type)
+    switch (type.kind) {
+        case "literal":
+            return typeof type.value === "string" ? [type.value] : []
+        case "union":
+            return [...new Set(type.types.flatMap(t => stringLiterals(t, aliases, seen)))]
+        case "genericRef": {
+            const alias = aliases.get(type.name)
+            return alias ? stringLiterals(alias, aliases, seen) : []
+        }
+        case "typeParam":
+            return stringLiterals(type.constraint, aliases, seen)
+        default:
+            return []
+    }
 }
 
 /** The member operator right before the word being typed, if there is one.

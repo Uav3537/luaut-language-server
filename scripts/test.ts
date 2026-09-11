@@ -335,6 +335,35 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     }
 }
 
+// --- call arguments --------------------------------------------------
+// An argument is checked against its parameter, a generic one against its
+// constraint, and a string argument offers what its parameter accepts.
+{
+    const messagesOf = (src: string): string[] => diagnostics(analyzer.get(open(src).document)).map(d => d.message)
+
+    check("arguments: a string where a number is expected", messagesOf(`wait("")\n`),
+        ["Argument of type '\"\"' is not assignable to parameter of type 'number | nil'"])
+    check("arguments: a literal outside a literal union",
+        messagesOf(`declare function pick(kind: "a" | "b"): nil\npick("c")\n`),
+        ["Argument of type '\"c\"' is not assignable to parameter of type '\"a\" | \"b\"'"])
+    check("arguments: a generic parameter is checked against its constraint",
+        messagesOf(`game.GetService(game, "")\n`).some(m => m.startsWith("Argument of type '\"\"' is not assignable to parameter of type '\"")), true)
+    check("arguments: the same through a method call",
+        messagesOf(`game:GetService("Nope")\n`).length, 1)
+    check("arguments: correct calls stay clean",
+        messagesOf(`wait()\nwait(1)\nprint(game:GetService("Players"), game.GetService(game, "Workspace"))\n`), [])
+
+    const labelsAt = (src: string): string[] => {
+        const { document, cursor } = open(src)
+        return completion(analyzer, document, cursor).map(i => i.label)
+    }
+    const services = labelsAt(`game.GetService(game, "‸")\n`)
+    contains("completion: a string argument offers what its parameter accepts", services, "ReplicatedStorage")
+    check("completion: and nothing else — no variables inside quotes", services.includes("print"), false)
+    contains("completion: through a method call, mid-word", labelsAt(`game:GetService("Rep‸")\n`), "ReplicatedStorage")
+    check("completion: a string with no expected values offers nothing", labelsAt(`print("‸")\n`), [])
+}
+
 // --- diagnostics -------------------------------------------------------
 {
     const { document } = open(`const n: number = "text"\n`)
