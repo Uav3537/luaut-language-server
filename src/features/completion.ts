@@ -222,7 +222,9 @@ function memberOperator(source: string, wordStart: number): "." | ":" | undefine
 
 function memberItems(analysis: Analysis, access: Spanned): CompletionItem[] {
     const object = (access as unknown as { object: Expression }).object
-    const type = analysis.types.typeOf.get(object)
+    // `a?.` reads from `a` when it is not nil, and so, in practice, does `a.`
+    // on a `T | nil` a check has not narrowed yet: offer what `T` has.
+    const type = withoutNil(analysis.types.typeOf.get(object))
     const colon = access.type === "MethodCallExpression"
 
     // A string has no fields, but `s:upper()` reaches the `string` library
@@ -239,6 +241,12 @@ function memberItems(analysis: Analysis, access: Spanned): CompletionItem[] {
     return membersOf(type, analysis.types.aliases)
         .filter(member => (colon ? member.isMethod : true))
         .map(member => memberItem(member.name, member.property.type, member.property.readonly))
+}
+
+function withoutNil(type: Type | undefined): Type | undefined {
+    if (type?.kind !== "union") return type
+    const kept = type.types.filter(t => !(t.kind === "primitive" && t.name === "nil"))
+    return kept.length === 1 ? kept[0] : { ...type, types: kept }
 }
 
 function isStringLike(type: Type | undefined): boolean {

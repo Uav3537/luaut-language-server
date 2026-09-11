@@ -265,6 +265,12 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const xs = [1, 2]\nxs.‸\n`), [])
     check("completion: `..` is concatenation, not member access",
         labelsAt(`const alpha = 1\nprint("a" ..‸)\n`).includes("alpha"), true)
+    const maybe = `type Part = { Name: string, Destroy: (self: Part) -> () }\ndeclare part: Part | nil\n`
+    check("completion: `?.` offers the members of the non-nil type",
+        labelsAt(`${maybe}part?.‸\n`).sort(), ["Destroy", "Name"])
+    check("completion: `?:` offers its methods",
+        labelsAt(`${maybe}part?:‸\n`), ["Destroy"])
+    contains("completion: past a `?.` in a chain", labelsAt(`game?.Workspace.‸\n`), "Name")
 }
 
 // --- modules -----------------------------------------------------------
