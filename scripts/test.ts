@@ -271,6 +271,8 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("completion: `?:` offers its methods",
         labelsAt(`${maybe}part?:‸\n`), ["Destroy"])
     contains("completion: past a `?.` in a chain", labelsAt(`game?.Workspace.‸\n`), "Name")
+    check("completion: a broken field leaves the rest of the object",
+        labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
 }
 
 // --- modules -----------------------------------------------------------
