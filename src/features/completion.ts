@@ -12,7 +12,7 @@ import {
     type CompletionItem, type Position,
 } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
-import { formatType, isClassType, type Expression, type Type } from "luaut-parser"
+import { formatType, isClassType, type Expression, type Type, type TypeNode } from "luaut-parser"
 import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
 import { importItems, serviceItems } from "./autoImport.js"
@@ -140,7 +140,10 @@ function stringCompletion(
     }
 
     const expected = analysis.types.expectedTypeOf.get(literal as unknown as Expression)
-    const values = stringLiterals(expected, analysis.types.aliases)
+    const values = [...new Set([
+        ...stringLiterals(expected, analysis.types.aliases),
+        ...indexKeys(analysis, position, literal),
+    ])]
     if (!values.length) return []
 
     // Replace what is between the quotes. A string spanning lines is left to
@@ -161,7 +164,23 @@ function stringCompletion(
 
 function stringAt(analysis: Analysis, position: Position): Spanned | undefined {
     const path = pathAt(analysis.program, position, false)
-    return [...path].reverse().find(n => n.type === "StringLiteral")
+    return [...path].reverse().find(n => n.type === "StringLiteral" || n.type === "TypeLiteralString")
+}
+
+/** The keys a string can name where it indexes something: `T["|"]` in a type
+ *  offers `T`'s property names, and `obj["|"]` those of `obj`'s type. */
+function indexKeys(analysis: Analysis, position: Position, literal: Spanned): string[] {
+    const path = pathAt(analysis.program, position, false)
+    const at = path.indexOf(literal)
+    const parent = at > 0 ? (path[at - 1] as unknown as Record<string, unknown>) : undefined
+    if (!parent) return []
+    let indexed: Type | undefined
+    if (parent.type === "IndexedAccessTypeNode" && parent.indexType === literal) {
+        indexed = analysis.types.typeOfTypeNode.get(parent.objectType as TypeNode)
+    } else if (parent.type === "IndexExpression" && parent.index === literal) {
+        indexed = withoutNil(analysis.types.typeOf.get(parent.object as Expression))
+    }
+    return membersOf(indexed, analysis.types.aliases).map(member => member.name)
 }
 
 /** Copies of the document where the string the cursor is in — possibly
@@ -192,7 +211,7 @@ function repairedStrings(document: TextDocument, position: Position): string[] {
     let rest = source.slice(offset, lineEnd).replace(/\r$/, "")
     if (!rest.includes(quote)) rest += quote
     const line = before + rest
-    const endings = ["", " then end", " do end", ")", ") then end"]
+    const endings = ["", " then end", " do end", ")", ") then end", "]"]
     return endings.map(ending => source.slice(0, lineStart) + line + ending + source.slice(lineEnd))
 }
 

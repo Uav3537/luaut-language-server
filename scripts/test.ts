@@ -271,6 +271,12 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("completion: `?:` offers its methods",
         labelsAt(`${maybe}part?:‸\n`), ["Destroy"])
     contains("completion: past a `?.` in a chain", labelsAt(`game?.Workspace.‸\n`), "Name")
+    const indexed = `type R = { RemoteMap: { Char: number }, ClassMap: { Sans: string } }\nconst t = { x: 1, y: 2 }\n`
+    check("completion: the keys a string can index, in a type, a constraint and a value", [
+        labelsAt(`${indexed}type K = R["‸"]\n`).sort(),
+        labelsAt(`${indexed}function f<K extends R["RemoteMap"]["‸"]>(k: K) end\n`),
+        labelsAt(`${indexed}print(t["‸"])\n`).sort(),
+    ], [["ClassMap", "RemoteMap"], ["Char"], ["x", "y"]])
     check("completion: a broken field leaves the rest of the object",
         labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
 }
