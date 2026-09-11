@@ -133,7 +133,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         hoverText(`type Shape = { r: number }\nconst s: Sha‸pe = { r: 1 }\n`), "type Shape = { r: number }")
     check("hover: an alias by its own name",
         hoverText(`type Sha‸pe = { r: number }\n`), "type Shape = { r: number }")
-    check("hover: a library type", hoverText(`const s: Servi‸ces = nil :: any\n`)?.startsWith("type Services = "), true)
+    check("hover: a library type", hoverText(`const s: Servi‸ces = nil as any\n`)?.startsWith("type Services = "), true)
     check("hover: a generic parameter",
         hoverText(`type Box<T extends string> = { value: ‸T }\n`), "(type parameter) T extends string")
     check("hover: a long object type goes one member per line",
@@ -194,7 +194,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("semantic: reserved words are left to the grammar",
         defaults.some(t => t.startsWith("const:") || t.startsWith("export:")), false)
 
-    const classes = tokensOf(`declare class Dog extends Instance { Bark: (self: Dog) -> () }\nconst d: Dog = nil :: any\nconst p: Vector3 = Vector3.new()\n`)
+    const classes = tokensOf(`declare class Dog extends Instance { Bark: (self: Dog) -> () }\nconst d: Dog = nil as any\nconst p: Vector3 = Vector3.new()\n`)
     contains("semantic: `class` in a declaration is a keyword", classes, "class:keyword")
     contains("semantic: the class name", classes, "Dog:class.declaration")
     contains("semantic: a superclass", classes, "Instance:class")
@@ -213,7 +213,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         `const type: "Instance"`)
     check("classes: a class shows what it extends and adds",
         hoverText(`const p: Pa‸rt = Instance.new("Part")\n`),
-        "declare class Part extends BasePart {\n    Shape: EnumItem,\n}")
+        "declare class Part extends FormFactorPart {\n    Shape: Enum.PartType,\n}")
     check("classes: an empty subclass",
         hoverText(`const s: ReplicatedSto‸rage = game:GetService("ReplicatedStorage")\n`),
         "declare class ReplicatedStorage extends Instance {}")
@@ -228,6 +228,18 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const labels = completion(analyzer, document, cursor).map(i => i.label)
     contains("classes: inherited members complete", labels, "Name")
     contains("classes: own members complete", labels, "Shape")
+    check("classes: a callback parameter is typed from the event",
+        hoverText(`game:GetService("Players").PlayerAdded:Connect(function(pla‸yer) end)\n`), "(parameter) player: Player")
+    check("classes: a qualified enum type",
+        hoverText(`const m: Enum.Mate‸rial = Enum.Material.Neon\n`), "declare class Enum.Material extends EnumItem {}")
+    const enumLabels = (src: string): string[] => {
+        const opened = open(src)
+        return completion(analyzer, opened.document, opened.cursor).map(i => i.label)
+    }
+    contains("classes: `Enum.` lists the enums", enumLabels(`const e = Enum.‸`), "KeyCode")
+    contains("classes: `Enum.KeyCode.` lists its items", enumLabels(`const k = Enum.KeyCode.‸`), "Space")
+    check("classes: operators follow metamethods",
+        hoverText(`const po‸s = Vector3.new() + Vector3.new(0, 1, 0)\n`), "const pos: Vector3")
     const symbols = documentSymbols(analyzer.get(open(`declare class Dog extends Instance {}\n`).document))
     check("classes: outline", symbols.map(s => [s.name, s.detail]), [["Dog", "extends Instance"]])
 }

@@ -140,10 +140,12 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
             }
             // A plain alias: its definition. The resolved type carries the
             // alias's name, so printing that would read `type Shape = Shape`.
-            if (!node.namespace && !(node.typeArguments as unknown[]).length) {
-                const alias = types.aliases.get(base)
-                if (alias && isClassType(alias)) return classText(analysis, base)
-                if (alias) return `type ${base} = ${pretty(alias)}`
+            if (!(node.typeArguments as unknown[]).length) {
+                // `Enum.Material` is declared under its qualified name.
+                const qualified = node.namespace ? `${node.namespace}.${base}` : base
+                const alias = types.aliases.get(qualified)
+                if (alias && isClassType(alias)) return classText(analysis, qualified)
+                if (alias) return `type ${qualified} = ${pretty(alias)}`
             }
             const type = typeOfNode(node)
             return type && `type ${referenceText(analysis, node)} = ${pretty(type)}`

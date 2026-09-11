@@ -135,7 +135,7 @@ function classify(
             if (!baseToken) return
             if (!namespace && typeParameterInScope(ancestors, base)) {
                 add(baseToken, base.length, "typeParameter")
-            } else if (!namespace && isClassType(analysis.types.aliases.get(base) ?? unknownType)) {
+            } else if (isClassType(analysis.types.aliases.get(namespace ? `${namespace}.${base}` : base) ?? unknownType)) {
                 add(baseToken, base.length, "class")
             } else {
                 add(baseToken, base.length, "type", PRIMITIVES.has(base) ? ["defaultLibrary"] : [])
