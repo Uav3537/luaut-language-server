@@ -129,8 +129,28 @@ function pathKey(path: string): string {
     return process.platform === "win32" ? normalized.toLowerCase() : normalized
 }
 
-/** What an import of a module still being analyzed up the chain sees. */
+/** What an import of a module still being analyzed up the chain sees, when
+ *  there is nothing better yet: its names read as `any`. */
 const CYCLE: ModuleExports = { values: new Map(), types: new Map(), partial: true }
+
+/**
+ * One analysis of a module and everything it imports.
+ *
+ * An import cycle can only be broken by letting one side see the other before
+ * it is finished — as `any`. A value exported from the far side and inferred
+ * from the near side then comes back as `any` too. So a run that met a cycle
+ * goes once more: the modules it analyzed are redone, and where an import
+ * meets a module mid-analysis it reads that module's exports from the first
+ * pass instead of `any`.
+ */
+interface Run {
+    /** Modules an import reached while they were still being analyzed. */
+    readonly cycles: Set<string>
+    /** Modules analyzed in this run — the ones a second pass redoes. */
+    readonly analyzed: Set<string>
+    /** Exports from the first pass, read in place of `any` in the second. */
+    readonly provisional: Map<string, ModuleExports>
+}
 
 // --------------------------------------------------------------------------
 // Analyzer
@@ -166,6 +186,8 @@ export class Analyzer {
     private readonly libraries = new Map<string, { source: string; program?: Program; problem?: ConfigProblem }>()
     /** Sourcemaps turned into types, by path, with what they were built from. */
     private readonly sourceMaps = new Map<string, { text: string; libraries: string; result: ReturnType<typeof sourceMapTypes> }>()
+    /** The analysis run in progress, if any. */
+    private run: Run | undefined
 
     constructor(options: AnalyzerOptions = {}) {
         this.openDocument = options.openDocument
@@ -196,7 +218,12 @@ export class Analyzer {
      *  completion, which analyzes a speculatively edited copy of the file. */
     analyze(uri: string, version: number, source: string): Analysis {
         const path = pathOfUri(uri)
-        return this.analyzeModule(uri, version, source, new Set(path ? [pathKey(path)] : []))
+        if (!path) return this.analyzeModule(uri, version, source, new Set())
+        const key = pathKey(path)
+        return this.resolvingCycles(key, () => {
+            const analysis = this.analyzeModule(uri, version, source, new Set([key]))
+            return { result: analysis, exports: () => this.exportsFrom(analysis, new Set([key])) }
+        })
     }
 
     forget(uri: string): void {
@@ -218,12 +245,15 @@ export class Analyzer {
 
     /** What the module at `path` exports, analyzing it if need be. */
     exportsAt(path: string): ModuleExports | undefined {
-        return this.exportsOf(path, new Set())
+        return this.resolvingCycles(pathKey(path), () => {
+            const exports = this.exportsOf(path, new Set())
+            return { result: exports, exports: () => exports }
+        })
     }
 
     /** The analysis of the module at `path`, analyzing it if need be. */
     moduleAt(path: string): Analysis | undefined {
-        this.exportsOf(path, new Set())
+        this.exportsAt(path)
         return this.modules.get(pathKey(path))?.analysis
     }
 
@@ -351,6 +381,43 @@ export class Analyzer {
 
     // ----------------------------------------------------------------- modules
 
+    /** Run one analysis of `root` and everything it imports; if that met an
+     *  import cycle, run it once more with the first pass's exports standing
+     *  in for the `any` the cycle left (see `Run`). A call made while a run is
+     *  already going is part of that run. */
+    private resolvingCycles<T>(
+        root: string,
+        analyzeRoot: () => { result: T; exports: () => ModuleExports | undefined },
+    ): T {
+        if (this.run) return analyzeRoot().result
+        const run: Run = { cycles: new Set(), analyzed: new Set(), provisional: new Map() }
+        this.run = run
+        try {
+            const first = analyzeRoot()
+            if (!run.cycles.size) return first.result
+
+            for (const key of run.cycles) {
+                const exports = key === root ? first.exports() : this.modules.get(key)?.exports
+                if (exports && !exports.partial) run.provisional.set(key, exports)
+            }
+            // Anything the first pass analyzed may have read `any` through the
+            // cycle, so all of it is redone.
+            for (const key of run.analyzed) this.modules.delete(key)
+            return analyzeRoot().result
+        } finally {
+            this.run = undefined
+        }
+    }
+
+    /** A module's exports, from its analysis. */
+    private exportsFrom(analysis: Analysis, importing: Set<string>): ModuleExports {
+        // Re-exports (`export ... from`) resolve relative to this module.
+        return moduleExports(analysis.program, analysis.scopes, analysis.types, specifier => {
+            const next = this.resolveModulePath(analysis.uri, specifier)
+            return next ? this.exportsOf(next, importing) : undefined
+        })
+    }
+
     /** `importing` holds every module on the current import chain, so an
      *  import back into one of them is recognized as a cycle. */
     private analyzeModule(uri: string, version: number, source: string, importing: Set<string>): Analysis {
@@ -388,7 +455,10 @@ export class Analyzer {
 
     private exportsOf(path: string, importing: Set<string>): ModuleExports | undefined {
         const key = pathKey(path)
-        if (importing.has(key)) return CYCLE
+        if (importing.has(key)) {
+            this.run?.cycles.add(key)
+            return this.run?.provisional.get(key) ?? CYCLE
+        }
         const source = this.readFile(path)
         if (source === undefined) return undefined
         const cached = this.modules.get(key)
@@ -396,12 +466,9 @@ export class Analyzer {
         importing.add(key)
         try {
             const analysis = this.analyzeModule(uriOfPath(path), -1, source, importing)
-            // Re-exports (`export ... from`) resolve relative to this module.
-            const exports = moduleExports(analysis.program, analysis.scopes, analysis.types, specifier => {
-                const next = this.resolveModulePath(analysis.uri, specifier)
-                return next ? this.exportsOf(next, importing) : undefined
-            })
+            const exports = this.exportsFrom(analysis, importing)
             this.modules.set(key, { analysis, exports })
+            this.run?.analyzed.add(key)
             return exports
         } finally {
             importing.delete(key)

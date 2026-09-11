@@ -371,6 +371,67 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("completion: a string with no expected values offers nothing", labelsAt(`print("‸")\n`), [])
 }
 
+// --- import cycles -----------------------------------------------------
+// A cycle is broken by letting one side see the other unfinished; a second
+// pass then fills in what that left as `any`.
+{
+    const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { dirname, join } = await import("node:path")
+    const { pathToFileURL } = await import("node:url")
+
+    const root = mkdtempSync(join(tmpdir(), "luaut-cycles-"))
+    const files: Record<string, string> = {
+        "values/a.luaut": `import { fromB } from "./b"\nexport const function fromA(): number\n    return 1\nend\nconst wrongA: number = fromB()\nprint(wrongA)\n`,
+        "values/b.luaut": `import { fromA } from "./a"\nexport const function fromB(): string\n    return "b"\nend\nconst wrongB: string = fromA()\nprint(wrongB)\n`,
+        "types/a.luaut": `import { B } from "./b"\nexport type A = { name: string, b: B | nil }\nconst wrongA: A = { name: 1, b: nil }\nprint(wrongA)\n`,
+        "types/b.luaut": `import { A } from "./a"\nexport type B = { count: number, a: A | nil }\nconst wrongB: B = { count: "x", a: nil }\nprint(wrongB)\n`,
+        "star/a.luaut": `export * from "./b"\nexport const ONE = 1\n`,
+        "star/b.luaut": `export * from "./a"\nexport const TWO = 2\n`,
+        "star/main.luaut": `import { ONE, TWO } from "./a"\nconst bad1: string = ONE\nconst bad2: string = TWO\nprint(bad1, bad2)\n`,
+        // What the first pass alone got wrong: exports of the far side inferred
+        // from the near side.
+        "back/a.luaut": `import { useA, AliasOfA, takesA } from "./b"\nexport const function fromA(): number\n    return 1\nend\nexport type A = { name: string }\nconst viaValue: string = useA\nconst viaAlias: AliasOfA = { name: 1 }\nconst viaFunction: string = takesA({ name: "x" })\nprint(viaValue, viaAlias, viaFunction)\n`,
+        "back/b.luaut": `import { fromA, A } from "./a"\nexport const useA = fromA()\nexport type AliasOfA = A\nexport const function takesA(a: A): number\n    return 1\nend\n`,
+        // A cycle the opened file is not part of: b <-> c.
+        "deep/main.luaut": `import { doubled } from "./b"\nconst wrong: string = doubled\nprint(wrong)\n`,
+        "deep/b.luaut": `import { derived } from "./c"\nexport const base = 1\nexport const doubled = derived\n`,
+        "deep/c.luaut": `import { base } from "./b"\nexport const derived = base\n`,
+    }
+    for (const [path, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(root, path)), { recursive: true })
+        writeFileSync(join(root, path), text)
+    }
+    const messagesOf = (analyzer: Analyzer, path: string): string[] => diagnostics(analyzer.get(
+        TextDocument.create(pathToFileURL(join(root, path)).href, "luaut", 1, files[path]))).map(d => d.message)
+    const fresh = (): Analyzer => new Analyzer({ libs: testLibs })
+
+    {
+        const cycles = fresh()
+        check("cycles: values, the first file opened", messagesOf(cycles, "values/a.luaut"), ["Type 'string' is not assignable to 'number'"])
+        check("cycles: values, the second", messagesOf(cycles, "values/b.luaut"), ["Type 'number' is not assignable to 'string'"])
+    }
+    check("cycles: values, opened the other way round", messagesOf(fresh(), "values/b.luaut"), ["Type 'number' is not assignable to 'string'"])
+    {
+        const cycles = fresh()
+        check("cycles: types, one side", messagesOf(cycles, "types/a.luaut").length, 1)
+        check("cycles: types, the other", messagesOf(cycles, "types/b.luaut").length, 1)
+    }
+    check("cycles: `export *` both ways", messagesOf(fresh(), "star/main.luaut"),
+        ["Type '1' is not assignable to 'string'", "Type '2' is not assignable to 'string'"])
+    check("cycles: an export inferred back from the importing file is not `any`",
+        messagesOf(fresh(), "back/a.luaut"),
+        [
+            "Type 'number' is not assignable to 'string'",
+            "Type '{ name: number }' is not assignable to '{ name: string }'",
+            "Type 'number' is not assignable to 'string'",
+        ])
+    check("cycles: a cycle the opened file is not part of", messagesOf(fresh(), "deep/main.luaut"),
+        ["Type '1' is not assignable to 'string'"])
+
+    rmSync(root, { recursive: true, force: true })
+}
+
 // --- projects ----------------------------------------------------------
 // Real folders: configs, installed type libraries, aliases and a sourcemap.
 {
