@@ -27,6 +27,12 @@ export function documentSymbols(analysis: Analysis): DocumentSymbol[] {
                 }
                 break
             }
+            case "DeclareClassStatement": {
+                const name = (node as unknown as { name: Identifier }).name.name
+                const superclass = (node as unknown as { superclass?: { base: string } }).superclass?.base
+                out.push(symbol(name, SymbolKind.Class, node, superclass && `extends ${superclass}`))
+                break
+            }
             case "VariableDeclaration": {
                 for (const target of (node as unknown as { names?: Spanned[] }).names ?? []) {
                     const name = (target as unknown as { name?: string }).name

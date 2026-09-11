@@ -12,7 +12,7 @@ import {
     type CompletionItem, type Position,
 } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
-import { formatType, type Expression, type Type } from "luaut-parser"
+import { formatType, isClassType, type Expression, type Type } from "luaut-parser"
 import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
 import { importCompletion } from "./imports.js"
@@ -83,10 +83,10 @@ export function completion(
 
     // A type position wants type names, not values.
     if (inTypePosition(first.path)) {
-        const named: CompletionItem[] = [...first.analysis.types.aliases.keys()].map(name => ({
+        const named: CompletionItem[] = [...first.analysis.types.aliases].map(([name, type]) => ({
             label: name,
-            kind: CompletionItemKind.Interface,
-            detail: "type",
+            kind: isClassType(type) ? CompletionItemKind.Class : CompletionItemKind.Interface,
+            detail: isClassType(type) ? "class" : "type",
         }))
         const primitives: CompletionItem[] = PRIMITIVES.map(name => ({
             label: name,
@@ -258,7 +258,8 @@ function kindOf(type: Type | undefined, bindingKind: string): CompletionItemKind
 function inTypePosition(path: readonly Spanned[]): boolean {
     return path.some(n =>
         !!n.type && (n.type.endsWith("TypeNode") || n.type === "TypeReference"
-            || n.type === "TypeAliasStatement" || n.type === "ExportTypeAliasStatement"),
+            || n.type === "TypeAliasStatement" || n.type === "ExportTypeAliasStatement"
+            || n.type === "DeclareClassStatement"),
     )
 }
 

@@ -8,7 +8,7 @@
  */
 import type { Hover, Position } from "vscode-languageserver"
 import {
-    formatType,
+    formatType, isClassType,
     type Binding, type Expression, type Identifier, type Type, type TypeNode,
 } from "luaut-parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
@@ -72,6 +72,9 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
                     break
                 case "DeclareStatement":
                     if (parent.id === node) return declareText(analysis, parent)
+                    break
+                case "DeclareClassStatement":
+                    if (parent.name === node) return classText(analysis, name)
                     break
                 case "TableTypeProperty":
                     if (parent.key === node) {
@@ -139,6 +142,7 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
             // alias's name, so printing that would read `type Shape = Shape`.
             if (!node.namespace && !(node.typeArguments as unknown[]).length) {
                 const alias = types.aliases.get(base)
+                if (alias && isClassType(alias)) return classText(analysis, base)
                 if (alias) return `type ${base} = ${pretty(alias)}`
             }
             const type = typeOfNode(node)
@@ -183,6 +187,22 @@ function declareText(analysis: Analysis, statement: AnyNode): string | undefined
     const others = total - 1
     const overloads = others > 0 ? `  (+${others} overload${others > 1 ? "s" : ""})` : ""
     return `declare function ${name}${formatType(own)}${overloads}`
+}
+
+/** `declare class Part extends BasePart { ... }` — the members this class
+ *  adds. What it inherits is a hover away, on the superclass. */
+function classText(analysis: Analysis, name: string): string | undefined {
+    const type = analysis.types.aliases.get(name)
+    if (!type || !isClassType(type)) return undefined
+    const superclass = type.class.superclass
+    const inherited = superclass ? analysis.types.aliases.get(superclass) : undefined
+    const own = [...type.properties].filter(([key, property]) =>
+        inherited?.kind !== "object" || inherited.properties.get(key) !== property)
+    const head = `declare class ${name}${superclass ? ` extends ${superclass}` : ""}`
+    if (!own.length) return `${head} {}`
+    const lines = own.map(([key, property]) =>
+        `    ${property.readonly ? "readonly " : ""}${key}${property.optional ? "?" : ""}: ${formatType(property.type)},`)
+    return `${head} {\n${lines.join("\n")}\n}`
 }
 
 interface TypeParameterNode {

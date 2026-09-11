@@ -13,13 +13,13 @@
  * reserved words — so the file looks right before the server answers.
  */
 import type { SemanticTokens, SemanticTokensLegend } from "vscode-languageserver"
-import { tokenize, type Binding, type Expression, type Identifier, type Token, type Type, type TypeNode } from "luaut-parser"
+import { tokenize, isClassType, unknownType, type Binding, type Expression, type Identifier, type Token, type Type, type TypeNode } from "luaut-parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
 import { children, type Spanned } from "../ast-utils.js"
 import { signaturesOf } from "./members.js"
 
 const TOKEN_TYPES = [
-    "namespace", "type", "typeParameter", "parameter", "variable",
+    "namespace", "type", "class", "typeParameter", "parameter", "variable",
     "property", "function", "method", "keyword",
 ] as const
 const TOKEN_MODIFIERS = ["declaration", "readonly", "defaultLibrary", "control"] as const
@@ -36,7 +36,7 @@ export const semanticTokensLegend: SemanticTokensLegend = {
  *  where they stand in the right place. A word is only coloured as one if the
  *  AST did not already claim it as a name. */
 const SOFT_KEYWORDS = new Set([
-    "type", "declare", "extends", "keyof", "infer", "readonly", "is", "asserts", "satisfies", "typeof",
+    "type", "declare", "class", "extends", "keyof", "infer", "readonly", "is", "asserts", "satisfies", "typeof",
     "default",
 ])
 
@@ -135,6 +135,8 @@ function classify(
             if (!baseToken) return
             if (!namespace && typeParameterInScope(ancestors, base)) {
                 add(baseToken, base.length, "typeParameter")
+            } else if (!namespace && isClassType(analysis.types.aliases.get(base) ?? unknownType)) {
+                add(baseToken, base.length, "class")
             } else {
                 add(baseToken, base.length, "type", PRIMITIVES.has(base) ? ["defaultLibrary"] : [])
             }
@@ -163,6 +165,9 @@ function identifier(analysis: Analysis, node: AnyNode, parent: AnyNode | undefin
         case "TypeAliasStatement":
         case "ExportTypeAliasStatement":
             if (parent.name === node) return as("type", ["declaration"])
+            break
+        case "DeclareClassStatement":
+            if (parent.name === node) return as("class", ["declaration"])
             break
         case "DeclareStatement":
             if (parent.id === node) return as(isFunction(typeOfNode(parent.valueType)) ? "function" : "variable", ["declaration"])
