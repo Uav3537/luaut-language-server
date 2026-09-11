@@ -684,6 +684,42 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         help ? help.activeParameter === 1 : null, true)
 }
 
+// --- records and discriminants -------------------------------------------
+{
+    const head = [
+        `const ReplicatedStorage = game:GetService("ReplicatedStorage")`,
+        `const Remotes = {`,
+        `    Char: ReplicatedStorage:FindFirstChild("Char") as RemoteEvent,`,
+        `    GetSettings: ReplicatedStorage:FindFirstChild("GetSettings") as RemoteFunction,`,
+        `}`,
+        `function scan()`,
+        `    for RemoteName, Remote in pairs(Remotes) do`,
+    ].join("\n") + "\n"
+    const labelsAt = (src: string): string[] => {
+        const opened = open(src)
+        return completion(analyzer, opened.document, opened.cursor).map(i => i.label)
+    }
+    const hoverAt = (src: string): string | undefined => {
+        const opened = open(src)
+        return (hover(analyzer.get(opened.document), opened.cursor)?.contents as { value: string } | undefined)
+            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+    }
+    check("records: a pairs key is the union of the property names",
+        hoverAt(head + `        print(Remote‸Name)\n    end\nend\n`), `RemoteName: "Char" | "GetSettings"`)
+    check("records: testing the key narrows the value",
+        hoverAt(head + `        if RemoteName == "GetSettings" then print(Rem‸ote) end\n    end\nend\n`), "Remote: RemoteFunction")
+    check("records: a compared string offers the keys",
+        labelsAt(head + `        if RemoteName == "‸" then end\n    end\nend\n`), ["Char", "GetSettings"])
+    check("records: ...while the line is still being typed",
+        labelsAt(head + `        if RemoteName == "‸\n    end\nend\n`), ["Char", "GetSettings"])
+    check("records: an unclosed argument string offers its values too",
+        labelsAt(`const P = game:GetService("Play‸\n`).includes("Players"), true)
+    check("records: an indexer holds only its value type",
+        diagnostics(analyzer.get(open(`const m: { [string]: Vector3 } = { a: game:GetService("ReplicatedStorage"):FindFirstChild("a") }\n`).document))
+            .map(d => d.message),
+        ["Type '{ a: Instance | nil }' is not assignable to '{ [string]: Vector3 }'"])
+}
+
 // --- symbols -----------------------------------------------------------
 {
     const { document } = open(

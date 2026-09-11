@@ -108,10 +108,24 @@ function stringCompletion(
     document: TextDocument,
     position: Position,
 ): CompletionItem[] | undefined {
-    const analysis = analyzer.get(document)
-    const path = pathAt(analysis.program, position, false)
-    const literal = [...path].reverse().find(n => n.type === "StringLiteral")
-    if (!literal) return undefined
+    let analysis = analyzer.get(document)
+    let literal = stringAt(analysis, position)
+    if (!literal) {
+        // Mid-typing, the line around the string rarely parses yet —
+        // `if name == "` has neither its closing quote nor its `then`. Try the
+        // likeliest endings on a copy, and read the string from the first
+        // that parses. The endings go after the cursor, so positions hold.
+        const repaired = repairedStrings(document, position)
+        for (const text of repaired) {
+            const candidate = analyzer.analyze(document.uri, -1, text)
+            literal = stringAt(candidate, position)
+            if (literal) {
+                analysis = candidate
+                break
+            }
+        }
+        if (!literal) return repaired.length ? [] : undefined
+    }
 
     const expected = analysis.types.expectedTypeOf.get(literal as unknown as Expression)
     const values = stringLiterals(expected, analysis.types.aliases)
@@ -131,6 +145,43 @@ function stringCompletion(
         kind: CompletionItemKind.Constant,
         ...(range ? { textEdit: { range, newText: value } } : {}),
     }))
+}
+
+function stringAt(analysis: Analysis, position: Position): Spanned | undefined {
+    const path = pathAt(analysis.program, position, false)
+    return [...path].reverse().find(n => n.type === "StringLiteral")
+}
+
+/** Copies of the document where the string the cursor is in — possibly
+ *  unclosed — could parse: its quote closed if need be, and the line finished
+ *  as an `if`, a loop or a call would be. Empty when the cursor is not inside
+ *  quotes at all. */
+function repairedStrings(document: TextDocument, position: Position): string[] {
+    const source = document.getText()
+    const offset = document.offsetAt(position)
+    const lineStart = offset - position.character
+    const lineEndIndex = source.indexOf("\n", offset)
+    const lineEnd = lineEndIndex < 0 ? source.length : lineEndIndex
+    const before = source.slice(lineStart, offset)
+
+    // Which quote, if any, the cursor is inside.
+    let quote: string | undefined
+    for (let i = 0; i < before.length; i++) {
+        const ch = before[i]
+        if (quote) {
+            if (ch === "\\") i++
+            else if (ch === quote) quote = undefined
+        } else if (ch === '"' || ch === "'") {
+            quote = ch
+        }
+    }
+    if (!quote) return []
+
+    let rest = source.slice(offset, lineEnd).replace(/\r$/, "")
+    if (!rest.includes(quote)) rest += quote
+    const line = before + rest
+    const endings = ["", " then end", " do end", ")", ") then end"]
+    return endings.map(ending => source.slice(0, lineStart) + line + ending + source.slice(lineEnd))
 }
 
 /** The string literal types a type admits — through unions, aliases and a
