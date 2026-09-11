@@ -18,11 +18,24 @@ import { signaturesOf } from "./members.js"
 export function hover(analysis: Analysis, position: Position): Hover | null {
     const path = pathAt(analysis.program, position, true)
     for (let i = path.length - 1; i >= 0; i--) {
+        // On an operator, a parenthesis or a dot the cursor is on no name:
+        // nothing to say, as in TypeScript — not the type of the whole
+        // expression around it.
+        if (UNNAMED.has(path[i].type as string)) return null
         const text = describe(analysis, path, i)
         if (text) return { contents: { kind: "markdown", value: code(text) }, range: toRange(path[i]) }
     }
     return null
 }
+
+/** Expressions made of other expressions plus operators or punctuation. The
+ *  names inside them have hovers of their own. */
+const UNNAMED = new Set([
+    "BinaryExpression", "UnaryExpression", "CallExpression", "MethodCallExpression",
+    "MemberExpression", "IndexExpression", "ParenthesizedExpression", "IfElseExpression",
+    "TableExpression", "ArrayExpression", "TypeAssertionExpression", "SatisfiesExpression",
+    "AsConstExpression", "InterpolatedStringExpression",
+])
 
 type AnyNode = Spanned & Record<string, unknown>
 
@@ -110,7 +123,7 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
             const binding = bindingOfNode(analysis, identifier)
             if (binding) {
                 const type = types.bindingType.get(binding.id)
-                if (type) return `${keyword(binding)} ${binding.name}: ${pretty(type)}`
+                if (type) return bindingText(binding, type)
             }
             // `x.foo` / `x:foo()` — the member's own type.
             if (parent?.type === "MemberExpression" || parent?.type === "MethodCallExpression") {
@@ -120,13 +133,13 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
             return undefined
         }
 
-        // Declarations: `const x`, a parameter, `const function f`.
+        // Declarations: `const x`, a parameter.
         case "IdentifierPattern":
         case "FunctionParameter":
         case "TypedIdentifier": {
             const binding = bindingOfNode(analysis, node)
             const type = binding && types.bindingType.get(binding.id)
-            return type ? `${keyword(binding)} ${binding.name}: ${pretty(type)}` : undefined
+            return type ? bindingText(binding, type) : undefined
         }
 
         // A type written by name: `number`, `Shape`, `Partial<User>`, or a type
@@ -283,10 +296,20 @@ function pretty(type: Type): string {
     return flat
 }
 
+/** `const x: number`, `function f(a: string) -> number`, `(import) util: {...}`. */
+function bindingText(binding: Binding, type: Type): string {
+    if (binding.declaredBy === "function" && type.kind === "function") {
+        return `function ${binding.name}${formatType(type)}`
+    }
+    return `${keyword(binding)} ${binding.name}: ${pretty(type)}`
+}
+
 function keyword(binding: Binding): string {
     if (binding.kind === "param" || binding.kind === "self") return "(parameter)"
     if (binding.kind === "global") return "(global)"
     if (binding.kind.startsWith("for-")) return "(loop variable)"
+    if (binding.declaredBy === "import" || binding.declaredBy === "namespace") return "(import)"
+    if (binding.declaredBy === "function") return "function"
     return binding.isConst ? "const" : "let"
 }
 

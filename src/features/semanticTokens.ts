@@ -197,6 +197,10 @@ function identifier(analysis: Analysis, node: AnyNode, parent: AnyNode | undefin
             if (analysis.types.aliases.has(name) && (!value || value.kind === "any")) return as("type", ["declaration"])
             break
         }
+        case "ImportStatement":
+            // `import * as Module`
+            if (parent.namespaceImport === node) return as("namespace", ["declaration"])
+            break
         case "ExportSpecifier":
             // `export { Size }` can name a type, which has no value binding.
             if (!bindingOfNode(analysis, node) && analysis.types.aliases.has(name)) return as("type")
@@ -219,6 +223,7 @@ function identifier(analysis: Analysis, node: AnyNode, parent: AnyNode | undefin
 function valueKind(analysis: Analysis, binding: Binding | undefined): TokenType {
     if (!binding) return "variable"
     if (binding.kind === "param" || binding.kind === "self") return "parameter"
+    if (binding.declaredBy === "namespace") return "namespace"
     return isFunction(analysis.types.bindingType.get(binding.id)) ? "function" : "variable"
 }
 

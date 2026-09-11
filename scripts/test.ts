@@ -83,11 +83,15 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("hover: a let declaration", hoverText(`let cou‸nt = 1\nprint(count)\n`),
         "```luaut-hover\nlet count: number\n```")
     check("hover: a parameter",
-        hoverText(`const function f(x‸s: number[]): number\n    return #xs\nend\n`),
+        hoverText(`function f(x‸s: number[]): number\n    return #xs\nend\n`),
         "```luaut-hover\n(parameter) xs: number[]\n```")
     check("hover: a function name",
-        hoverText(`const function first‸Two(xs: number[]): number\n    return 1\nend\n`),
-        "```luaut-hover\nconst firstTwo: (xs: number[]) -> number\n```")
+        hoverText(`function first‸Two(xs: number[]): number\n    return 1\nend\n`),
+        "```luaut-hover\nfunction firstTwo(xs: number[]) -> number\n```")
+    check("hover: nothing on an operator", hoverText(`declare a: boolean\ndeclare b: number\nconst c = a a‸nd b\n`), undefined)
+    check("hover: nothing on a parenthesis", hoverText(`print( ‸ 1)\n`), undefined)
+    check("hover: an operand still has its own", hoverText(`declare a: boolean\ndeclare b: number\nconst c = ‸a and b\n`),
+        "```luaut-hover\na: boolean\n```")
 }
 {
     const { document, cursor } = open(`const tot‸al = 1\nprint(total)\n`)
@@ -277,7 +281,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     writeFileSync(join(root, "shared", "shapes.luaut"), [
         "export type Point = { x: number, y: number }",
         "export const ORIGIN: Point = { x: 0, y: 0 }",
-        "export const function distance(a: Point, b: Point): number",
+        "export function distance(a: Point, b: Point): number",
         "    return a.x - b.x",
         "end",
         "export default ORIGIN",
@@ -335,11 +339,28 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         const { document, cursor } = file("jump.luaut", `import { dist‸ance } from "./shared/shapes"\nprint(distance)\n`)
         const location = importDefinition(modules, modules.get(document), cursor)
         check("modules: definition jumps into the other module", location?.uri.endsWith("shapes.luaut"), true)
-        check("modules: ...to the exported declaration", location?.range.start, { line: 2, character: 22 })
+        check("modules: ...to the exported declaration", location?.range.start, { line: 2, character: 16 })
     }
     {
         const { document, cursor } = file("member.luaut", `import origin from "./shared/shapes"\norigin.‸\n`)
         contains("modules: members of a default import", completion(modules, document, cursor).map(i => i.label), "x")
+    }
+    {
+        const { document, cursor } = file("namespace.luaut", `import * as Shapes from "./shared/shapes"\nShapes.‸\n`)
+        const labels = completion(modules, document, cursor).map(i => i.label)
+        contains("modules: `import * as` completes the module's exports", labels, "distance")
+        contains("modules: including its default", labels, "default")
+    }
+    {
+        const { document, cursor } = file("namespace-type.luaut",
+            `import * as Shapes from "./shared/shapes"\nconst p: Shapes.Point = Shapes.ORIGIN\nprint(Sha‸pes.distance(p, p))\n`)
+        check("modules: a namespace's exported type and values check", diagnostics(modules.get(document)).map(d => d.message), [])
+        check("modules: hovering the namespace", /^```luaut-hover\nShapes: \{[\s\S]*readonly distance/.test(hoverText(document, cursor) ?? ""), true)
+    }
+    {
+        const { document } = file("assign-import.luaut", `import { ORIGIN } from "./shared/shapes"\nORIGIN = nil as any\n`)
+        check("modules: assigning to an import is an error",
+            diagnostics(modules.get(document)).map(d => d.message), ["Cannot assign to 'ORIGIN' — it is an import"])
     }
     {
         // Export lists, a renamed export, and `export *`.
@@ -431,8 +452,8 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
 
     const root = mkdtempSync(join(tmpdir(), "luaut-cycles-"))
     const files: Record<string, string> = {
-        "values/a.luaut": `import { fromB } from "./b"\nexport const function fromA(): number\n    return 1\nend\nconst wrongA: number = fromB()\nprint(wrongA)\n`,
-        "values/b.luaut": `import { fromA } from "./a"\nexport const function fromB(): string\n    return "b"\nend\nconst wrongB: string = fromA()\nprint(wrongB)\n`,
+        "values/a.luaut": `import { fromB } from "./b"\nexport function fromA(): number\n    return 1\nend\nconst wrongA: number = fromB()\nprint(wrongA)\n`,
+        "values/b.luaut": `import { fromA } from "./a"\nexport function fromB(): string\n    return "b"\nend\nconst wrongB: string = fromA()\nprint(wrongB)\n`,
         "types/a.luaut": `import { B } from "./b"\nexport type A = { name: string, b: B | nil }\nconst wrongA: A = { name: 1, b: nil }\nprint(wrongA)\n`,
         "types/b.luaut": `import { A } from "./a"\nexport type B = { count: number, a: A | nil }\nconst wrongB: B = { count: "x", a: nil }\nprint(wrongB)\n`,
         "star/a.luaut": `export * from "./b"\nexport const ONE = 1\n`,
@@ -440,8 +461,8 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         "star/main.luaut": `import { ONE, TWO } from "./a"\nconst bad1: string = ONE\nconst bad2: string = TWO\nprint(bad1, bad2)\n`,
         // What the first pass alone got wrong: exports of the far side inferred
         // from the near side.
-        "back/a.luaut": `import { useA, AliasOfA, takesA } from "./b"\nexport const function fromA(): number\n    return 1\nend\nexport type A = { name: string }\nconst viaValue: string = useA\nconst viaAlias: AliasOfA = { name: 1 }\nconst viaFunction: string = takesA({ name: "x" })\nprint(viaValue, viaAlias, viaFunction)\n`,
-        "back/b.luaut": `import { fromA, A } from "./a"\nexport const useA = fromA()\nexport type AliasOfA = A\nexport const function takesA(a: A): number\n    return 1\nend\n`,
+        "back/a.luaut": `import { useA, AliasOfA, takesA } from "./b"\nexport function fromA(): number\n    return 1\nend\nexport type A = { name: string }\nconst viaValue: string = useA\nconst viaAlias: AliasOfA = { name: 1 }\nconst viaFunction: string = takesA({ name: "x" })\nprint(viaValue, viaAlias, viaFunction)\n`,
+        "back/b.luaut": `import { fromA, A } from "./a"\nexport const useA = fromA()\nexport type AliasOfA = A\nexport function takesA(a: A): number\n    return 1\nend\n`,
         // A cycle the opened file is not part of: b <-> c.
         "deep/main.luaut": `import { doubled } from "./b"\nconst wrong: string = doubled\nprint(wrong)\n`,
         "deep/b.luaut": `import { derived } from "./c"\nexport const base = 1\nexport const doubled = derived\n`,
@@ -548,7 +569,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         projects.get(openFile("dup/x.luaut", "")).project.problems.length, 2)
     check("projects: a missing type library is reported",
         projects.get(openFile("missing/x.luaut", "")).project.problems.map(problem => problem.message),
-        ["Cannot find type library 'nope'. Install it with: npm i -D @luaut/nope"])
+        ["Cannot find type library '@luaut/nope'. Install it with: npm i -D @luaut/nope"])
 
     // Editing a config re-checks the files under it.
     put("game/lite/luaut.config.json", JSON.stringify({ types: ["roblox"], paths: {}, sourceMap: null }))
@@ -640,7 +661,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
 // --- signature help ----------------------------------------------------
 {
     const { document, cursor } = open(
-        `const function add(a: number, b: string): number\n    return a\nend\nadd(1, ‸)\n`,
+        `function add(a: number, b: string): number\n    return a\nend\nadd(1, ‸)\n`,
     )
     const help = signatureHelp(analyzer, document, cursor)
     check("signature help: label", help?.signatures[0]?.label, "(a: number, b: string) -> number")
