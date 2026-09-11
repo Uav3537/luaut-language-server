@@ -211,6 +211,8 @@ function valueItems(analysis: Analysis, at: Position): CompletionItem[] {
     const seen = new Set<string>()
     for (const binding of analysis.scopes.bindings.values()) {
         if (binding.name === PLACEHOLDER || seen.has(binding.name)) continue
+        // `import type` names are not values.
+        if (binding.declaredBy === "type") continue
         const declaration = binding.declarationNode as unknown as Spanned | undefined
         if (declaration && declaration.line.start - 1 > at.line) continue
         seen.add(binding.name)

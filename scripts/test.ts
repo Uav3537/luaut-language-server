@@ -358,6 +358,16 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         check("modules: hovering the namespace", /^```luaut-hover\nShapes: \{[\s\S]*readonly distance/.test(hoverText(document, cursor) ?? ""), true)
     }
     {
+        const { document, cursor } = file("type-import.luaut",
+            `import type { Point, distance } from "./shared/shapes"\nconst p: Point = { x: 1, y: 2 }\nprint(dist‸ance)\n`)
+        check("modules: a type-only import used as a value is an error", diagnostics(modules.get(document)).map(d => d.message),
+            ["'distance' is imported with 'import type' and can only be used as a type"])
+        check("modules: hovering a type-only import", hoverText(document, { line: 0, character: 22 })?.includes("(type import) distance"), true)
+        check("modules: type-only imports are not offered as values",
+            completion(modules, document, { line: 2, character: 6 }).map(i => i.label).includes("distance"), false)
+        void cursor
+    }
+    {
         const { document } = file("assign-import.luaut", `import { ORIGIN } from "./shared/shapes"\nORIGIN = nil as any\n`)
         check("modules: assigning to an import is an error",
             diagnostics(modules.get(document)).map(d => d.message), ["Cannot assign to 'ORIGIN' — it is an import"])

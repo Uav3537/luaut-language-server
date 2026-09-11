@@ -309,6 +309,7 @@ function keyword(binding: Binding): string {
     if (binding.kind === "global") return "(global)"
     if (binding.kind.startsWith("for-")) return "(loop variable)"
     if (binding.declaredBy === "import" || binding.declaredBy === "namespace") return "(import)"
+    if (binding.declaredBy === "type") return "(type import)"
     if (binding.declaredBy === "function") return "function"
     return binding.isConst ? "const" : "let"
 }

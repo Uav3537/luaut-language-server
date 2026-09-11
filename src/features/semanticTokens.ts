@@ -193,6 +193,7 @@ function identifier(analysis: Analysis, node: AnyNode, parent: AnyNode | undefin
         case "ImportSpecifier": {
             // A type-only import is a type, not an `any` value.
             const binding = bindingOfNode(analysis, node)
+            if (binding?.declaredBy === "type") return as("type", ["declaration"])
             const value = binding && analysis.types.bindingType.get(binding.id)
             if (analysis.types.aliases.has(name) && (!value || value.kind === "any")) return as("type", ["declaration"])
             break
