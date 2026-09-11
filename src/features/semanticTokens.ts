@@ -22,7 +22,7 @@ const TOKEN_TYPES = [
     "namespace", "type", "typeParameter", "parameter", "variable",
     "property", "function", "method", "keyword",
 ] as const
-const TOKEN_MODIFIERS = ["declaration", "readonly", "defaultLibrary"] as const
+const TOKEN_MODIFIERS = ["declaration", "readonly", "defaultLibrary", "control"] as const
 
 type TokenType = typeof TOKEN_TYPES[number]
 type TokenModifier = typeof TOKEN_MODIFIERS[number]
@@ -37,7 +37,13 @@ export const semanticTokensLegend: SemanticTokensLegend = {
  *  AST did not already claim it as a name. */
 const SOFT_KEYWORDS = new Set([
     "type", "declare", "extends", "keyof", "infer", "readonly", "is", "asserts", "satisfies", "typeof",
+    "default",
 ])
+
+/** Soft keywords that belong with `export` / `return` rather than with
+ *  `const` / `type`: marked `control`, which the editor extension maps to the
+ *  scope themes colour control keywords with. */
+const CONTROL_KEYWORDS = new Set(["default"])
 
 const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer"])
 
@@ -80,14 +86,14 @@ export function semanticTokens(analysis: Analysis): SemanticTokens {
     }
     walk(analysis.program)
 
+    // Reserved words are left to the grammar: it already tells a control
+    // keyword (`if`, `export`) from a declaration keyword (`const`), the way
+    // themes colour them. Overriding them with one "keyword" type flattened
+    // that. Only soft keywords need the parser's say-so.
     for (const token of tokens) {
         const value = (token as { value?: unknown }).value
-        if (typeof value !== "string") continue
-        if (token.type === "Keyword" && value !== "true" && value !== "false" && value !== "nil") {
-            add(token, value.length, "keyword")
-        } else if (token.type === "Identifier" && SOFT_KEYWORDS.has(value)) {
-            add(token, value.length, "keyword")
-        }
+        if (token.type !== "Identifier" || typeof value !== "string" || !SOFT_KEYWORDS.has(value)) continue
+        add(token, value.length, "keyword", CONTROL_KEYWORDS.has(value) ? ["control"] : [])
     }
 
     return { data: encode([...entries.values()]) }

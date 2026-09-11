@@ -180,6 +180,12 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const literal = tokensOf(`declare foo: { readonly bar: number, run: (x: number) -> nil }\n`)
     contains("semantic: a readonly property in a type", literal, "bar:property.declaration.readonly")
     contains("semantic: a function-typed property is a method", literal, "run:method.declaration")
+
+    const defaults = tokensOf(`const main = 1\nexport default main\nconst options = { default: 1 }\nprint(options.default)\n`)
+    contains("semantic: `default` after `export` is a control keyword", defaults, "default:keyword.control")
+    contains("semantic: a property named `default` is still a property", defaults, "default:property")
+    check("semantic: reserved words are left to the grammar",
+        defaults.some(t => t.startsWith("const:") || t.startsWith("export:")), false)
 }
 
 // --- completion where people actually type ------------------------------
