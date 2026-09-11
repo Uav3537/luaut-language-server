@@ -16,7 +16,7 @@ luaut-language-server --stdio
 
 | request | notes |
 |---|---|
-| `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke. `--@luaut-nocheck`, `--@luaut-ignore` and `--@luaut-expect-error` silence scope and type errors |
+| `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke. A name nothing declares is an error ("Cannot find name 'x'") whenever type libraries are loaded. `--@luaut-nocheck`, `--@luaut-ignore` and `--@luaut-expect-error` silence scope and type errors |
 | `hover` | the type as luaut writes it — the **narrowed** type at a reference, so a guarded `v` reads `string`, not `string \| nil`. Also every name in a type or definitions file: `declare` names (with their overload count), classes (`declare class Part extends BasePart { ...what it adds }`), alias names, object-type properties, type parameters, `infer` names, and any type annotation, which reads as what it resolves to |
 | `semanticTokens` | colours from the parser, not from patterns — see [Highlighting](#highlighting) |
 | `definition` | the binding's declaration — and from an `import`, the export in the other module |

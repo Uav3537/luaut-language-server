@@ -297,6 +297,16 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         diagnosticsOf(`--@luaut-nocheck\nconst a: number = "x"\nnope()\n`),
         diagnosticsOf(`--@luaut-nocheck\nconst a = \n`).length,
     ], [[], ["Unused '@luaut-expect-error' directive"], [], 1])
+    check("undeclared: a name nothing declares, and not an assigned global or a declare", [
+        diagnosticsOf(`print(typo, game)
+const t = Missing.x
+`),
+        diagnosticsOf(`counter = 1
+print(counter)
+declare later: number
+print(later)
+`),
+    ], [["Cannot find name 'typo'", "Cannot find name 'Missing'"], []])
 }
 
 // --- modules -----------------------------------------------------------

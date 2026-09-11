@@ -431,7 +431,10 @@ export class Analyzer {
         const globals = script ? [...context.globals, "script"] : context.globals
 
         const { program, errors, directives } = parseWithRecovery(source)
-        const scopes = analyzeScopes(program, { builtinGlobals: [...globals] })
+        // A name nothing declares is only an error against type libraries:
+        // without one, `print` itself is undeclared.
+        const reportUndeclared = context.libs.length > 0
+        const scopes = analyzeScopes(program, { builtinGlobals: [...globals], reportUndeclared })
         const dependencies = new Map(context.reads)
         const types = analyzeTypes(program, scopes, {
             libs,
