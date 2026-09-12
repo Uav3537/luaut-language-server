@@ -281,6 +281,23 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
 }
 
+// --- inside a template ---------------------------------------------------
+// `${...}` is parsed from its own text; its nodes used to sit at the top of an
+// imaginary file, so nothing in one could be pointed at.
+{
+    const hoverText = (src: string): string | undefined => {
+        const { document, cursor } = open(src)
+        return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
+            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+    }
+    check("hover: a name inside an interpolation",
+        hoverText(`const count = 3\nconst s = \`n = \${cou‸nt}\`\n`), "count: 3")
+    check("hover: the second interpolation of a template",
+        hoverText(`const a = 1\nconst b = "x"\nconst s = \`\${a} \${‸b}\`\n`), `b: "x"`)
+    check("hover: nothing on the text around it",
+        hoverText(`const count = 3\nconst s = \`n‸ = \${count}\`\n`), undefined)
+}
+
 // --- unknown type names, and values offered where a type says what fits ---
 {
     const messagesFor = (src: string): string[] =>
