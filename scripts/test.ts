@@ -282,6 +282,27 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
 }
 
+// --- the keys a type says an object literal should have -----------------
+{
+    const labelsAt = (src: string): string[] => {
+        const { document, cursor } = open(src)
+        return completion(analyzer, document, cursor).map(i => i.label)
+    }
+    const shape = `type Shape = { width: number, height: number, label?: string }\n`
+    check("completion: the keys a `satisfies` type names",
+        labelsAt(`${shape}const s = {\n    ‸\n} satisfies Shape\n`).sort(), ["height", "label", "width"])
+    check("completion: the keys an annotation names, minus those already written",
+        labelsAt(`${shape}const s: Shape = {\n    width: 1,\n    ‸\n}\n`).sort(), ["height", "label"])
+    check("completion: the keys a parameter names",
+        labelsAt(`${shape}declare function take(s: Shape): ()\ntake({\n    ‸\n})\n`).sort(), ["height", "label", "width"])
+    check("completion: a mapped type's keys",
+        labelsAt(`type Names = "a" | "b"\nconst m = {\n    ‸\n} satisfies { [K in Names]: number }\n`).sort(), ["a", "b"])
+    check("completion: a nested literal's keys",
+        labelsAt(`type Outer = { inner: { deep: number } }\nconst o: Outer = {\n    inner: {\n        ‸\n    }\n}\n`), ["deep"])
+    check("completion: a value is a value, not a key",
+        labelsAt(`${shape}const w = 5\nconst s: Shape = {\n    width: ‸\n}\n`).includes("height"), false)
+}
+
 // --- a ternary's parts, and each line of an overload set -----------------
 {
     const hoverText = (src: string): string | undefined => {

@@ -82,6 +82,10 @@ export function completion(
     // empty list is honest; the globals are never what was meant there.
     if (operator || !first) return []
 
+    // A key of an object literal written where a type says what belongs in it.
+    const keys = objectKeyItems(first.analysis, first.path, source.slice(end))
+    if (keys) return keys
+
     // A type position wants type names, not values.
     if (inTypePosition(first.path)) {
         const named: CompletionItem[] = [...first.analysis.types.aliases].map(([name, type]) => ({
@@ -171,6 +175,43 @@ function stringCompletion(
 function stringAt(analysis: Analysis, position: Position): Spanned | undefined {
     const path = pathAt(analysis.program, position, false)
     return [...path].reverse().find(n => n.type === "StringLiteral" || n.type === "TypeLiteralString")
+}
+
+/** Inside `{ | }` written against a type — an annotation, `satisfies`, an
+ *  argument — the keys that type names, minus the ones already written. */
+function objectKeyItems(
+    analysis: Analysis,
+    path: readonly Spanned[],
+    after: string,
+): CompletionItem[] | undefined {
+    const index = path.findLastIndex(
+        n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
+    )
+    const literal = index > 0 ? (path[index - 1] as unknown as Record<string, unknown>) : undefined
+    if (literal?.type !== "TableExpression") return undefined
+    const fields = literal.fields as { type: string; key?: { name?: string; value?: string }; name?: { name: string } }[]
+    // Only where a key is being written: `{ width: | }` is a value.
+    const atKey = fields.some(f => f.type === "TableFieldShorthand" && f.name?.name === PLACEHOLDER)
+    if (!atKey) return undefined
+    const expected = analysis.types.expectedTypeOf.get(literal as unknown as Expression)
+    const members = membersOf(expected, analysis.types.aliases)
+    if (!members.length) return undefined
+
+    const written = new Set<string>()
+    for (const field of fields) {
+        if (field.type === "TableFieldNamed") written.add(field.key?.name ?? field.key?.value ?? "")
+        else if (field.type === "TableFieldShorthand" && field.name?.name !== PLACEHOLDER) written.add(field.name!.name)
+    }
+    // `name: ` unless the line already has the colon.
+    const colon = /^\s*:/.test(after)
+    return members
+        .filter(member => !written.has(member.name))
+        .map(member => ({
+            label: member.name,
+            kind: CompletionItemKind.Field,
+            detail: `${member.property.optional ? "?" : ""}: ${formatType(member.property.type)}`,
+            insertText: colon ? member.name : `${member.name}: `,
+        }))
 }
 
 /** The keys a string can name where it indexes something: `T["|"]` in a type
