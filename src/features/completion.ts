@@ -193,7 +193,14 @@ function objectKeyItems(
     // Only where a key is being written: `{ width: | }` is a value.
     const atKey = fields.some(f => f.type === "TableFieldShorthand" && f.name?.name === PLACEHOLDER)
     if (!atKey) return undefined
-    const expected = analysis.types.expectedTypeOf.get(literal as unknown as Expression)
+    // `{ ... } as const satisfies T` records the expectation on the whole
+    // `as const`, so read through the wrappers the literal sits in.
+    let expected = analysis.types.expectedTypeOf.get(literal as unknown as Expression)
+    for (let up = index - 2; expected === undefined && up >= 0; up--) {
+        const outer = path[up]
+        if (outer.type !== "AsConstExpression" && outer.type !== "ParenthesizedExpression") break
+        expected = analysis.types.expectedTypeOf.get(outer as unknown as Expression)
+    }
     const members = membersOf(expected, analysis.types.aliases)
     if (!members.length) return undefined
 

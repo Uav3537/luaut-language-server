@@ -9,6 +9,21 @@ export interface Member {
     isMethod: boolean
 }
 
+/** The keys an index signature spells out one by one, if it does. */
+function literalKeys(key: Type | undefined, aliases: ReadonlyMap<string, Type>): string[] {
+    if (!key) return []
+    const resolved = key.kind === "genericRef" ? aliases.get(key.name) : key
+    if (!resolved) return []
+    const parts = resolved.kind === "union" ? resolved.types : [resolved]
+    const out: string[] = []
+    for (const part of parts) {
+        const member = part.kind === "genericRef" ? aliases.get(part.name) ?? part : part
+        if (member.kind !== "literal" || typeof member.value !== "string") return []
+        out.push(member.value)
+    }
+    return out
+}
+
 /** The members of `type`, following aliases, merging intersections and keeping
  *  only what every member of a union has (you can only reach a property that
  *  is there whichever way the union went). */
@@ -24,6 +39,14 @@ export function membersOf(
         case "object": {
             const out: Member[] = []
             for (const [name, property] of type.properties) {
+                out.push({ name, property, isMethod: takesSelf(property.type) })
+            }
+            // `{ [("a" | "b")]: V }` covers a countable set of keys, so those
+            // keys are members too — optional, since an index signature does
+            // not promise any of them is there. `[string]` names none.
+            for (const name of literalKeys(type.indexer?.key, aliases)) {
+                if (type.properties.has(name)) continue
+                const property = { type: type.indexer!.value, optional: true }
                 out.push({ name, property, isMethod: takesSelf(property.type) })
             }
             return out

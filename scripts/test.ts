@@ -303,6 +303,22 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`${shape}const w = 5\nconst s: Shape = {\n    width: ‸\n}\n`).includes("height"), false)
 }
 
+// --- the keys an index signature spells out --------------------------------
+{
+    const labelsAt = (src: string): string[] => {
+        const { document, cursor } = open(src)
+        return completion(analyzer, document, cursor).map(i => i.label)
+    }
+    const names = `type Names = "GTFrisk" | "XTFrisk"\n`
+    check("completion: the keys a finite index signature covers",
+        labelsAt(`${names}const perClass = {\n    ‸\n} as const satisfies { [Names]: () -> () }\n`).sort(),
+        ["GTFrisk", "XTFrisk"])
+    // `[string]` names no key in particular, so nothing replaces the ordinary
+    // suggestions there.
+    check("completion: `[string]` spells out no keys",
+        labelsAt(`const m = {\n    ‸\n} satisfies { [string]: number }\n`).includes("print"), true)
+}
+
 // --- a ternary's parts, and each line of an overload set -----------------
 {
     const hoverText = (src: string): string | undefined => {
