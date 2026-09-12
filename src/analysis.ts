@@ -438,6 +438,7 @@ export class Analyzer {
         const dependencies = new Map(context.reads)
         const types = analyzeTypes(program, scopes, {
             libs,
+            reportUnknownTypes: reportUndeclared,
             resolveModule: specifier => {
                 if (!path) return undefined
                 const candidates = this.candidatesFor(path, specifier)

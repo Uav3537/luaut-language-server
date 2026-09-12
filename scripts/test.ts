@@ -281,6 +281,34 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
 }
 
+// --- unknown type names, and values offered where a type says what fits ---
+{
+    const messagesFor = (src: string): string[] =>
+        diagnostics(analyzer.get(open(src).document)).map(d => d.message)
+    check("types: a name nothing declares", [
+        messagesFor(`const x: Nope = 1\n`),
+        messagesFor(`function f(a: NoParam): NoReturn\n    return a\nend\n`),
+        messagesFor(`const p: Part = Instance.new("Part")\nconst m: Enum.Material = Enum.Material.Grass\ntype Mine = { a: number }\nconst mine: Mine = { a: 1 }\nfunction g<T>(v: T): T\n    return v\nend\n`),
+        messagesFor(`type Cased = Uppercase<"a">\nconst c: Cased = "A"\n`),
+    ], [
+        ["Cannot find name 'Nope'"],
+        ["Cannot find name 'NoParam'", "Cannot find name 'NoReturn'"],
+        [],
+        [],
+    ])
+
+    const valuesAt = (src: string): string[] => {
+        const { document, cursor } = open(src)
+        return completion(analyzer, document, cursor).map(i => i.label)
+    }
+    const mode = `type Mode = "fast" | "slow"\n`
+    check("completion: the values a type admits, where one is written", [
+        valuesAt(`${mode}function f(m: Mode = "‸")\nend\n`).sort(),
+        valuesAt(`${mode}const m: Mode = "‸"\n`).sort(),
+        valuesAt(`${mode}type Cfg = { mode: Mode }\nconst c: Cfg = { mode: "‸" }\n`).sort(),
+    ], [["fast", "slow"], ["fast", "slow"], ["fast", "slow"]])
+}
+
 // --- keywords where they are valid, and `...` ---------------------------
 {
     // `typeof` is a function at runtime as well, so it belongs in a value
