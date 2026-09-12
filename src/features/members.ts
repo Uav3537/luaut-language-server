@@ -1,5 +1,5 @@
 /** What members a type has — shared by completion and signature help. */
-import { formatType, type FunctionType, type ObjectProperty, type Type } from "luaut-parser"
+import { formatType, substitute, union, type FunctionType, type ObjectProperty, type Type } from "luaut-parser"
 
 export interface Member {
     name: string
@@ -72,6 +72,22 @@ export function membersOf(
         }
         case "typeParam":
             return membersOf(type.constraint, aliases, seen)
+        // An array and a string answer to the methods the language gives them
+        // — `names:filter(f)`, `text:trim()`. They are written in the parser's
+        // prelude as `ArrayMethods<T>` and `StringMethods`, so the element
+        // type goes in where `T` stands.
+        case "array":
+        case "tuple": {
+            const element = type.kind === "array" ? type.element : union(type.elements)
+            const methods = aliases.get("ArrayMethods")
+            return methods
+                ? membersOf(substitute(methods, new Map([["T", element]])), aliases, seen)
+                : []
+        }
+        case "primitive":
+            return type.name === "string" ? membersOf(aliases.get("StringMethods"), aliases, seen) : []
+        case "literal":
+            return type.base === "string" ? membersOf(aliases.get("StringMethods"), aliases, seen) : []
         default:
             return []
     }

@@ -312,16 +312,10 @@ function memberItems(analysis: Analysis, access: Spanned): CompletionItem[] {
     const type = withoutNil(analysis.types.typeOf.get(object))
     const colon = access.type === "MethodCallExpression"
 
-    // A string has no fields, but `s:upper()` reaches the `string` library
-    // through the string metatable — so after `:` offer that library.
-    if (isStringLike(type)) {
-        if (!colon) return []
-        const id = analysis.scopes.globalsByName.get("string")
-        const library = id === undefined ? undefined : analysis.types.bindingType.get(id)
-        return membersOf(library, analysis.types.aliases)
-            .filter(member => signaturesOf(member.property.type).length > 0)
-            .map(member => memberItem(member.name, member.property.type, member.property.readonly))
-    }
+    // An array and a string have no fields of their own: what they answer to
+    // is the language's own methods, and only with `:`. `names.filter` would
+    // be a read of a key the table does not have.
+    if (isMethodOnly(type) && !colon) return []
 
     return membersOf(type, analysis.types.aliases)
         .filter(member => (colon ? member.isMethod : true))
@@ -334,13 +328,18 @@ function withoutNil(type: Type | undefined): Type | undefined {
     return kept.length === 1 ? kept[0] : { ...type, types: kept }
 }
 
-function isStringLike(type: Type | undefined): boolean {
+/** A value whose members are all methods the language gives it — an array or
+ *  a string — rather than fields of its own. */
+function isMethodOnly(type: Type | undefined): boolean {
     if (!type) return false
     switch (type.kind) {
+        case "array":
+        case "tuple":
+        case "templateLiteral":
+            return true
         case "primitive": return type.name === "string"
         case "literal": return typeof type.value === "string"
-        case "templateLiteral": return true
-        case "union": return type.types.length > 0 && type.types.every(isStringLike)
+        case "union": return type.types.length > 0 && type.types.every(isMethodOnly)
         default: return false
     }
 }

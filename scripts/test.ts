@@ -304,6 +304,28 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`${shape}const w = 5\nconst s: Shape = {\n    width: ‸\n}\n`).includes("height"), false)
 }
 
+// --- the methods arrays and strings answer to ------------------------------
+{
+    const labelsAt = (src: string): string[] => {
+        const { document, cursor } = open(src)
+        return completion(analyzer, document, cursor).map(i => i.label)
+    }
+    const arrayMethods = labelsAt(`const names = ["a"]\nnames:‸\n`)
+    check("completion: an array's methods", [
+        arrayMethods.includes("filter"), arrayMethods.includes("map"), arrayMethods.includes("join"),
+        // Only with `:` — `names.filter` reads a key the table does not have.
+        labelsAt(`const names = ["a"]\nnames.‸\n`).length,
+    ], [true, true, true, 0])
+
+    const stringMethods = labelsAt(`declare text: string\ntext:‸\n`)
+    check("completion: a string's methods, Luau's own and the language's", [
+        stringMethods.includes("upper"), stringMethods.includes("gsub"),
+        stringMethods.includes("trim"), stringMethods.includes("startsWith"),
+        // `string.char` is a function of the library, not a method of a string.
+        stringMethods.includes("char"),
+    ], [true, true, true, true, false])
+}
+
 // --- the keys an index signature spells out --------------------------------
 {
     const labelsAt = (src: string): string[] => {
@@ -818,7 +840,7 @@ print(later)
         pathToFileURL(join(dirname(root), `luaut-no-config-${Date.now()}`, "x.luaut")).href, "luaut", 1, "print(1)\n"))
     check("projects: a file no config covers has only the language's own types",
         [loose.project.config, [...loose.types.aliases.keys()].sort().join(" ")],
-        [undefined, "Exclude Extract Falsy Mutable NonNullable Omit Parameters Partial Pick Readonly Record Required ReturnType Truthy"])
+        [undefined, "ArrayMethods Exclude Extract Falsy Mutable NonNullable Omit Parameters Partial Pick Readonly Record Required ReturnType StringMethods Truthy"])
 
     check("projects: two configs in one folder are reported on both",
         projects.get(openFile("dup/x.luaut", "")).project.problems.length, 2)
