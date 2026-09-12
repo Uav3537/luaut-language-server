@@ -281,6 +281,36 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
 }
 
+// --- keywords where they are valid, and `...` ---------------------------
+{
+    // `typeof` is a function at runtime as well, so it belongs in a value
+    // position too — only the type-position cases look for it.
+    const keywordsAt = (src: string, wanted = ["keyof", "infer", "extends", "as", "satisfies"]): string[] => {
+        const { document, cursor } = open(src)
+        const set = new Set(wanted)
+        return completion(analyzer, document, cursor).map(i => i.label).filter(l => set.has(l)).sort()
+    }
+    const typeKeywords = ["keyof", "typeof", "infer", "extends"]
+    check("completion: a type position offers the type keywords",
+        keywordsAt(`const x: ‸\n`, typeKeywords), ["extends", "infer", "keyof", "typeof"])
+    check("completion: a type argument too",
+        keywordsAt(`type B = Partial<‸>\n`, typeKeywords), ["extends", "infer", "keyof", "typeof"])
+    check("completion: `extends` after a type parameter's name", keywordsAt(`function f<K ‸>() end\n`), ["extends"])
+    check("completion: `as` and `satisfies` after an expression",
+        keywordsAt(`const v = { a: 1 } ‸\n`), ["as", "satisfies"])
+    check("completion: and nowhere else", [keywordsAt(`const a = 1\n‸\n`), keywordsAt(`function f()\n    ‸\nend\n`)], [[], []])
+
+    const hoverText = (src: string): string | undefined => {
+        const { document, cursor } = open(src)
+        return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
+            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+    }
+    check("hover: `...` is what the function declared it takes",
+        hoverText(`function f(...: number)\n    print(‸...)\nend\n`), "(vararg) ...: number")
+    check("hover: an undeclared `...`",
+        hoverText(`function f(...)\n    print(‸...)\nend\n`), "(vararg) ...: any")
+}
+
 // --- hover inside a destructuring pattern --------------------------------
 // A shorthand key and the name it declares have the same span, so the cursor
 // lands on the key: it used to show nothing at all.

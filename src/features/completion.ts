@@ -94,9 +94,14 @@ export function completion(
             kind: CompletionItemKind.Keyword,
             detail: "type",
         }))
+        const keywords: CompletionItem[] = TYPE_KEYWORDS.map(name => ({
+            label: name,
+            kind: CompletionItemKind.Keyword,
+            sortText: `3${name}`,
+        }))
         const typeNames = new Set(first.analysis.types.aliases.keys())
         const imported = importItems(analyzer, analyzer.get(document), true, typeNames)
-        return [...named, ...primitives, ...imported]
+        return [...named, ...primitives, ...keywords, ...imported]
     }
 
     // Names in scope, then what picking an item can bring into scope: another
@@ -106,6 +111,7 @@ export function completion(
     const current = analyzer.get(document)
     return [
         ...valueItems(first.analysis, at),
+        ...contextKeywords(source.slice(0, start)),
         ...importItems(analyzer, current, false, taken),
         ...serviceItems(current, taken),
     ]
@@ -358,6 +364,25 @@ function inTypePosition(path: readonly Spanned[]): boolean {
 const PRIMITIVES = [
     "any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer",
 ]
+
+/** Keywords only a type position can hold. */
+const TYPE_KEYWORDS = ["keyof", "typeof", "infer", "extends"]
+
+/** Keywords that only follow something particular: `as` / `satisfies` an
+ *  expression, `extends` a type parameter's name. Offered only there, so
+ *  ordinary code is not littered with them. */
+function contextKeywords(before: string): CompletionItem[] {
+    const keyword = (name: string): CompletionItem => ({
+        label: name,
+        kind: CompletionItemKind.Keyword,
+        sortText: `3${name}`,
+    })
+    // `function f<K |`, `type Box<T |`
+    if (/<\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s+$/.test(before)) return [keyword("extends")]
+    // Something an expression can end with, on this line: `x |`, `f() |`.
+    if (/[)\]}"'`\w][^\S\n]+$/.test(before)) return [keyword("as"), keyword("satisfies")]
+    return []
+}
 
 const KEYWORDS = [
     "const", "let", "function", "return", "if", "then", "elseif", "else", "end",
