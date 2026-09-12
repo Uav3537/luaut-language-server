@@ -14,6 +14,7 @@ import { definition, references, rename } from "../src/features/navigation.js"
 import { completion } from "../src/features/completion.js"
 import { signatureHelp } from "../src/features/signatureHelp.js"
 import { documentSymbols } from "../src/features/symbols.js"
+import { semanticTokens } from "../src/features/semanticTokens.js"
 import type { Position } from "vscode-languageserver"
 
 import { readFileSync } from "node:fs"
@@ -279,6 +280,43 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     ], [["ClassMap", "RemoteMap"], ["Char"], ["x", "y"]])
     check("completion: a broken field leaves the rest of the object",
         labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
+}
+
+// --- a ternary's parts, and each line of an overload set -----------------
+{
+    const hoverText = (src: string): string | undefined => {
+        const { document, cursor } = open(src)
+        return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
+            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+    }
+    const ternary = `declare c: boolean\nconst a = 1\nconst b = 2\n`
+    check("hover: the parts of `cond ? a : b`", [
+        hoverText(`${ternary}const v = ‸c ? a : b\n`),
+        hoverText(`${ternary}const v = c ? ‸a : b\n`),
+        hoverText(`${ternary}const v = c ? a : ‸b\n`),
+    ], ["c: boolean", "a: 1", "b: 2"])
+
+    const overloads = `export function f(x: "a"): number\nexport function f(x: "b"): string\nexport function f(x)\n    return nil\nend\nprint(f("a"))\n`
+    check("hover: each line of an overload set shows its own signature, the body's line the whole set", [
+        hoverText(overloads.replace(`function f(x: "a")`, `function ‸f(x: "a")`)),
+        hoverText(overloads.replace(`function f(x: "b")`, `function ‸f(x: "b")`)),
+        hoverText(overloads.replace("function f(x)", "function ‸f(x)")),
+    ], [
+        `function f(x: "a") -> number`,
+        `function f(x: "b") -> string`,
+        `function f: ((x: "a") -> number) & ((x: "b") -> string)`,
+    ])
+
+    const { document } = open(overloads)
+    const analysis = analyzer.get(document)
+    const tokenLines = new Set<number>()
+    const data = semanticTokens(analysis).data
+    for (let i = 0, line = 0; i < data.length; i += 5) {
+        line += data[i]
+        if (data[i + 2] === 1) tokenLines.add(line)
+    }
+    check("semantic tokens: every line of the set colours its name",
+        [0, 1, 2].every(line => tokenLines.has(line)), true)
 }
 
 // --- inside a template ---------------------------------------------------

@@ -75,11 +75,10 @@ function collect(container: object, out: Spanned[]): void {
 
 /** A node-shaped object (it has a `type` tag) that has no span of its own. */
 function isSpanlessNode(v: unknown): v is object {
-    if (!v || typeof v !== "object") return false
-    const node = v as { type?: unknown; kind?: unknown }
-    // A template's parts are `{ kind: "expression", expression }` — no `type`
-    // of their own, but the expression inside them is a node like any other.
-    return typeof node.type === "string" || typeof node.kind === "string"
+    // Anything in the tree that carries no span of its own: a template's parts
+    // (`{ kind: "expression", expression }`), a ternary's clauses
+    // (`{ condition, body }`). What they hold are nodes like any other.
+    return !!v && typeof v === "object" && !Array.isArray(v)
 }
 
 /** The chain of nodes containing `pos`, outermost first — the last entry is

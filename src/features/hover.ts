@@ -75,6 +75,15 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
                     const type = binding && types.bindingType.get(binding.id)
                     return type && `(property) ${name}: ${pretty(type)}`
                 }
+                // One line of an overload set reads as its own signature.
+                // The line the body is on reads as the whole set, which is
+                // what the binding says and what the default path gives.
+                case "FunctionSignature": {
+                    if (parent.name !== node) break
+                    const own = types.typeOfTypeNode.get(parent as unknown as TypeNode)
+                    if (own) return `function ${name}${pretty(own)}`
+                    break
+                }
                 case "ImportSpecifier": {
                     // A type-only import has no value worth showing (`any`);
                     // the type it brings in is the answer.
