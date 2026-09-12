@@ -281,6 +281,33 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
 }
 
+// --- hover inside a destructuring pattern --------------------------------
+// A shorthand key and the name it declares have the same span, so the cursor
+// lands on the key: it used to show nothing at all.
+{
+    const hoverText = (src: string): string | undefined => {
+        const { document, cursor } = open(src)
+        return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
+            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+    }
+    const t = `declare t: { RemoteMap: number, other: string, nested: { deep: number } }\n`
+    check("hover: a shorthand key is the binding it declares",
+        hoverText(`${t}const { Remote‸Map } = t\n`), "const RemoteMap: number")
+    check("hover: a renamed key is the property it reads",
+        hoverText(`${t}const { Remote‸Map: renamed } = t\n`), "(property) RemoteMap: number")
+    check("hover: and the name it is renamed to is the binding",
+        hoverText(`${t}const { RemoteMap: ren‸amed } = t\n`), "const renamed: number")
+    check("hover: a nested shorthand key",
+        hoverText(`${t}const { nested: { de‸ep } } = t\n`), "const deep: number")
+    check("hover: a destructured parameter",
+        hoverText(`function f({ a‸ }: { a: number }) end\n`), "(parameter) a: number")
+    check("hover: a destructuring assignment target",
+        hoverText(`${t}let other = ""\n{ oth‸er } = t\n`), "let other: string")
+    check("hover: the rest of a pattern, without what it did not take",
+        hoverText(`${t}const { RemoteMap, ...re‸st } = t\n`),
+        "const rest: { nested: { deep: number }, other: string }")
+}
+
 // --- services and directives ---------------------------------------------
 {
     const serviceEdit = (src: string, label: string) => {

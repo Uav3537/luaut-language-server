@@ -63,6 +63,18 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
                     const type = property?.type ?? types.typeOf.get(field.value)
                     return type && `(property) ${name}: ${pretty(type)}`
                 }
+                // `const { name } = t`: a shorthand key *is* the binding it
+                // declares, and has the same span, so the cursor can land on
+                // either. A renamed key (`{ name: other }`) names the property
+                // the value is read from.
+                case "ObjectPatternProperty": {
+                    if (parent.key !== node || parent.computed) break
+                    const value = parent.value as AnyNode
+                    if (parent.shorthand) return describe(analysis, [...path.slice(0, index), value], index)
+                    const binding = value.type === "IdentifierPattern" ? bindingOfNode(analysis, value) : undefined
+                    const type = binding && types.bindingType.get(binding.id)
+                    return type && `(property) ${name}: ${pretty(type)}`
+                }
                 case "ImportSpecifier": {
                     // A type-only import has no value worth showing (`any`);
                     // the type it brings in is the answer.
