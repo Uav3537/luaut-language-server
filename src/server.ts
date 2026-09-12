@@ -125,8 +125,9 @@ export function createServer(connection: Connection, options: ServerOptions = {}
             source: "luaut",
             code: "no-config",
             message: "No luaut.config.json applies to this file, so no types are loaded — not even `print`. "
-                + "Add one to this folder or a folder above, such as "
-                + "{ \"types\": [\"luau\"], \"paths\": {}, \"sourceMap\": null }",
+                + "Add one to this folder or a folder above: "
+                + "{ \"types\": [], \"paths\": {}, \"sourceMap\": null }, "
+                + "listing in `types` the type libraries the project has installed.",
         }]
     }
 
