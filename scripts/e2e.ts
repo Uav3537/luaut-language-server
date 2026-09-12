@@ -15,7 +15,7 @@ import { dirname, join, resolve } from "node:path"
 const here = dirname(fileURLToPath(import.meta.url))
 
 const root = mkdtempSync(join(tmpdir(), "luaut-e2e-"))
-for (const name of ["luau", "roblox"]) {
+for (const name of ["lua", "luau", "roblox"]) {
     const installed = resolve(here, `../node_modules/@luaut/${name}`)
     const target = join(root, "node_modules", "@luaut", name)
     mkdirSync(target, { recursive: true })
