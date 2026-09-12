@@ -20,10 +20,10 @@ import type { Position } from "vscode-languageserver"
 import { readFileSync } from "node:fs"
 import { parse } from "luaut-parser"
 
-// The parser has no types built in. These tests analyze against the Lua, Luau
-// and Roblox libraries, as a project whose config lists them would — in that
-// order, since each layer adds to the one below.
-const testLibs = ["lua", "luau", "roblox"].map(name =>
+// The parser has no types built in. These tests analyze against the Lua and
+// Roblox libraries, as a project whose config lists them would — in that
+// order, since Roblox's adds to Lua's.
+const testLibs = ["lua", "roblox"].map(name =>
     parse(readFileSync(new URL(`../node_modules/@luaut/${name}/index.d.luaut`, import.meta.url), "utf8")))
 const analyzer = new Analyzer({ libs: testLibs })
 let passed = 0
@@ -769,7 +769,7 @@ print(later)
         writeFileSync(join(root, path), text)
     }
     // The type libraries, installed the way a project would have them.
-    for (const name of ["lua", "luau", "roblox"]) {
+    for (const name of ["lua", "roblox"]) {
         const installed = fileURLToPath(new URL(`../node_modules/@luaut/${name}/`, import.meta.url))
         for (const file of ["package.json", "index.d.luaut"]) {
             put(`node_modules/@luaut/${name}/${file}`, readFileSync(join(installed, file), "utf8"))

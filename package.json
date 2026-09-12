@@ -34,8 +34,7 @@
   "type": "module",
   "devDependencies": {
     "@luaut/lua": "^1.0.0",
-    "@luaut/luau": "^3.0.0",
-    "@luaut/roblox": "^2.3.0",
+    "@luaut/roblox": "^3.0.0",
     "@types/node": "^22.20.2",
     "tsup": "^8.5.1",
     "tsx": "^4.23.13",
